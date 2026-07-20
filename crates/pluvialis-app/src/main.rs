@@ -23,9 +23,23 @@ fn attach_parent_console() {
         CreateFileA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
     use windows::Win32::System::Console::{
-        ATTACH_PARENT_PROCESS, AttachConsole, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+        STD_HANDLE, SetStdHandle,
     };
     use windows::core::PCSTR;
+
+    /// Whether this standard handle is already usable.
+    ///
+    /// It is whenever the caller redirected or piped us, and in that case it
+    /// must be left alone: pointing it at the console instead would send the
+    /// output to the terminal and hand the pipe nothing, which breaks every
+    /// `| Select-String` and `> file` the tool is used with.
+    fn already_connected(which: STD_HANDLE) -> bool {
+        match unsafe { GetStdHandle(which) } {
+            Ok(handle) => !handle.is_invalid(),
+            Err(_) => false,
+        }
+    }
 
     unsafe {
         // Fails when there is no parent console, which is the ordinary case
@@ -34,10 +48,16 @@ fn attach_parent_console() {
             return;
         }
 
-        // Attaching does not reliably repoint the standard handles, and this
-        // process started without any, so set them explicitly. Rust's Windows
-        // stdio fetches the handle per write, so this takes effect even though
-        // it happens after startup.
+        let stdout_needed = !already_connected(STD_OUTPUT_HANDLE);
+        let stderr_needed = !already_connected(STD_ERROR_HANDLE);
+        if !stdout_needed && !stderr_needed {
+            return;
+        }
+
+        // Attaching does not reliably repoint the standard handles, and a GUI
+        // subsystem process starts with none, so set them explicitly. Rust's
+        // Windows stdio fetches the handle per write, so this takes effect
+        // even though it happens after startup.
         let console = CreateFileA(
             PCSTR(c"CONOUT$".as_ptr().cast()),
             GENERIC_READ.0 | GENERIC_WRITE.0,
@@ -48,8 +68,12 @@ fn attach_parent_console() {
             None,
         );
         if let Ok(console) = console {
-            let _ = SetStdHandle(STD_OUTPUT_HANDLE, console);
-            let _ = SetStdHandle(STD_ERROR_HANDLE, console);
+            if stdout_needed {
+                let _ = SetStdHandle(STD_OUTPUT_HANDLE, console);
+            }
+            if stderr_needed {
+                let _ = SetStdHandle(STD_ERROR_HANDLE, console);
+            }
         }
     }
 }
