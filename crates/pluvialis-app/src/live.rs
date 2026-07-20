@@ -26,11 +26,25 @@ use eframe::egui;
 use egui::text::{ByteIndex, LayoutJob, LayoutSection};
 use egui::{Color32, FontId, TextFormat};
 
-use pluvialis_core::format::{Formatted, format};
+use pluvialis_core::format::{Event, Formatted, format};
 use pluvialis_core::{
     Delta, Dictionary, DictionaryStack, Document, Stroke, Translation, Translator, steno_edit,
 };
+use pluvialis_core::document::StenoEdit;
 use pluvialis_machine::{MachineEvent, MachineStatus, Scanner, all_machines};
+
+/// Where an output batch goes.
+///
+/// Decided by window focus at the moment the batch is produced, and each batch
+/// goes to exactly one of these. Never both: that is what makes double typing
+/// impossible by construction rather than an intermittent bug.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Destination {
+    /// Pluvialis has focus, so steno lands in the document at the caret.
+    Document,
+    /// Something else has focus, so steno is typed as real keystrokes.
+    OtherWindow,
+}
 
 /// Raw steno that found no dictionary entry.
 ///
@@ -90,6 +104,17 @@ pub struct LiveView {
     loaded: Vec<String>,
     load_error: Option<String>,
 
+    /// Whether our own window had focus as of this frame.
+    focused: bool,
+    /// Where the previous batch went, so a batch that crosses the boundary does
+    /// not try to backspace into the other destination's text.
+    last_destination: Destination,
+    /// The tray toggle. With this off, steno still translates and still shows
+    /// on the tape, but nothing is typed anywhere.
+    output_enabled: bool,
+    #[cfg(windows)]
+    keyboard: pluvialis_output::Keyboard,
+
     /// Kept alive so the machine thread keeps running; dropping it stops the
     /// scan.
     _scanner: Option<Scanner>,
@@ -109,6 +134,11 @@ impl LiveView {
             events_logged: 0,
             loaded: Vec::new(),
             load_error: None,
+            focused: true,
+            last_destination: Destination::Document,
+            output_enabled: true,
+            #[cfg(windows)]
+            keyboard: pluvialis_output::Keyboard::new(),
             _scanner: None,
             machine_events: None,
             machine_status: MachineStatus::Searching,
@@ -146,7 +176,13 @@ impl LiveView {
     }
 
     /// Drain whatever the machine thread has produced. Called once per frame.
-    pub fn pump_machine(&mut self) {
+    ///
+    /// Focus is sampled here, before any stroke is handled, so a whole batch is
+    /// routed by the focus that was true when it arrived rather than by
+    /// whatever happens to be true partway through.
+    pub fn pump_machine(&mut self, ctx: &egui::Context) {
+        self.focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+
         let Some(events) = &self.machine_events else {
             return;
         };
@@ -221,13 +257,14 @@ impl LiveView {
     /// edit can be applied wherever the caret happens to be.
     fn reformat(&mut self) {
         let next = format(self.translator.history());
-        let edit = steno_edit(&self.shadow, &next);
+        let mut edit = steno_edit(&self.shadow, &next);
 
+        let destination = self.destination();
         if !edit.is_empty() {
-            self.document.apply(&edit);
+            self.deliver(&mut edit, destination);
         }
         self.shadow = next;
-        self.layout = None;
+        self.dispatch_events(destination);
 
         for meta in &self.shadow.unknown_metas {
             log::warn!("unimplemented meta command {{{meta}}}");
@@ -236,12 +273,90 @@ impl LiveView {
         // Key combos and PLOVER: commands are consumed by the output layer in
         // M5. Until then, seeing them go past confirms they are being parsed
         // out of the text rather than typed into the document.
-        if self.shadow.events.len() > self.events_logged {
-            for event in &self.shadow.events[self.events_logged..] {
-                log::info!("event (not yet dispatched): {event:?}");
+    }
+
+    fn destination(&self) -> Destination {
+        match self.focused {
+            true => Destination::Document,
+            false => Destination::OtherWindow,
+        }
+    }
+
+    /// Perform key combos and application commands produced by this batch.
+    ///
+    /// Combos are only sent when another window has focus. `{#Control_L(Left)}`
+    /// means "press these keys in whatever you are typing into"; synthesising
+    /// it while Pluvialis itself is focused would send it to our own text
+    /// widget, which is not what any dictionary entry means by it.
+    fn dispatch_events(&mut self, destination: Destination) {
+        if self.shadow.events.len() <= self.events_logged {
+            return;
+        }
+        let fresh: Vec<Event> = self.shadow.events[self.events_logged..].to_vec();
+        self.events_logged = self.shadow.events.len();
+
+        for event in fresh {
+            match event {
+                Event::KeyCombo(spec) => {
+                    if destination != Destination::OtherWindow || !self.output_enabled {
+                        log::debug!("key combo {{#{spec}}} ignored: not typing into another window");
+                        continue;
+                    }
+                    match pluvialis_output::parse_combo(&spec) {
+                        // An unknown key name is reported by name rather than
+                        // dropped, so a dictionary entry that cannot work is
+                        // discoverable instead of merely inert.
+                        Err(e) => log::warn!("key combo {{#{spec}}}: {e}"),
+                        Ok(chords) => {
+                            #[cfg(windows)]
+                            if let Err(e) = self.keyboard.send_combo(&chords) {
+                                log::warn!("could not send key combo {{#{spec}}}: {e}");
+                            }
+                            #[cfg(not(windows))]
+                            let _ = chords;
+                        }
+                    }
+                }
+                Event::Command(command) => {
+                    log::info!("application command {{PLOVER:{command}}} is not implemented");
+                }
             }
         }
-        self.events_logged = self.shadow.events.len();
+    }
+
+    /// Send one batch to exactly one destination.
+    fn deliver(&mut self, edit: &mut StenoEdit, destination: Destination) {
+        // A correction's backspaces refer to text the *previous* batch wrote.
+        // If that went somewhere else, deleting here would eat characters this
+        // program never wrote, in someone else's document. Drop them and keep
+        // only the insertion.
+        if destination != self.last_destination && (edit.backspaces > 0 || edit.backspace_keys > 0)
+        {
+            log::debug!(
+                "focus changed mid correction, dropping {} backspaces rather than \
+                 deleting text in the other destination",
+                edit.backspace_keys
+            );
+            edit.backspaces = 0;
+            edit.backspace_keys = 0;
+        }
+        self.last_destination = destination;
+
+        match destination {
+            Destination::Document => {
+                self.document.apply(edit);
+                self.layout = None;
+            }
+            Destination::OtherWindow => {
+                if !self.output_enabled {
+                    return;
+                }
+                #[cfg(windows)]
+                if let Err(e) = self.keyboard.send_edit(edit.backspace_keys, &edit.text) {
+                    log::warn!("could not type into the focused window: {e}");
+                }
+            }
+        }
     }
 
     fn clear(&mut self) {
@@ -363,6 +478,18 @@ impl LiveView {
                     ui.label(format!("Writer disconnected ({reason}), searching"));
                 }
             }
+            ui.separator();
+
+            // Where the next stroke will go, which is decided by focus and is
+            // otherwise invisible. Worth showing, because "why is nothing
+            // appearing" is almost always this.
+            let toggle = ui.checkbox(&mut self.output_enabled, "Type into other windows");
+            toggle.on_hover_text(
+                "When another window has focus, steno is typed into it as real keystrokes.\n\
+                 With this off, strokes still translate and still show on the tape, but \
+                 nothing is typed anywhere.",
+            );
+
             ui.separator();
             match &self.load_error {
                 Some(error) => {

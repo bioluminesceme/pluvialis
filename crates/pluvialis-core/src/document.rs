@@ -23,7 +23,15 @@ use crate::format::Formatted;
 /// insert `text`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StenoEdit {
+    /// Bytes to delete, for the in-app document, which indexes by byte.
     pub backspaces: usize,
+    /// Backspace *keypresses* to send, for another application, since one
+    /// keypress deletes one character rather than one byte.
+    ///
+    /// The two differ for any non-ASCII text and the user's Dutch dictionary is
+    /// full of it. Using the byte count to drive keystrokes would eat extra
+    /// characters, silently and only sometimes.
+    pub backspace_keys: usize,
     pub text: String,
     /// Ranges within `text` that are untranslated steno.
     pub raw_ranges: Vec<(usize, usize)>,
@@ -243,6 +251,7 @@ pub fn steno_edit(previous: &Formatted, next: &Formatted) -> StenoEdit {
 
     StenoEdit {
         backspaces: previous.text.len() - prefix,
+        backspace_keys: previous.text[prefix..].chars().count(),
         text: next.text[prefix..].to_owned(),
         raw_ranges,
     }
@@ -275,6 +284,27 @@ mod tests {
             .iter()
             .map(|&(start, end)| &document.text[start..end])
             .collect()
+    }
+
+    /// One backspace keypress deletes one character, not one byte. Driving
+    /// keystrokes from the byte count eats extra characters on any accented
+    /// text, silently and only sometimes.
+    #[test]
+    fn backspace_keypresses_are_counted_in_characters_not_bytes() {
+        // Three e-acutes: six bytes, three characters.
+        let edit = steno_edit(
+            &formatted("\u{00E9}\u{00E9}\u{00E9}", vec![]),
+            &formatted("", vec![]),
+        );
+        assert_eq!(edit.backspaces, 6, "bytes, for the in-app document");
+        assert_eq!(edit.backspace_keys, 3, "keypresses, for another app");
+    }
+
+    #[test]
+    fn for_ascii_the_two_backspace_counts_agree() {
+        let edit = steno_edit(&formatted("cat", vec![]), &formatted("", vec![]));
+        assert_eq!(edit.backspaces, 3);
+        assert_eq!(edit.backspace_keys, 3);
     }
 
     #[test]
@@ -317,6 +347,7 @@ mod tests {
         let mut doc = document("cat", vec![], 3);
         doc.apply(&StenoEdit {
             backspaces: 0,
+            backspace_keys: 0,
             text: " dog".to_owned(),
             raw_ranges: vec![],
         });
@@ -330,6 +361,7 @@ mod tests {
         let mut doc = document("the dog", vec![], 3);
         doc.apply(&StenoEdit {
             backspaces: 0,
+            backspace_keys: 0,
             text: " big".to_owned(),
             raw_ranges: vec![],
         });
@@ -343,6 +375,7 @@ mod tests {
         let mut doc = document("cat KAT", vec![(4, 7)], 0);
         doc.apply(&StenoEdit {
             backspaces: 0,
+            backspace_keys: 0,
             text: "big ".to_owned(),
             raw_ranges: vec![],
         });
@@ -355,6 +388,7 @@ mod tests {
         let mut doc = document("cat KAT", vec![(4, 7)], 7);
         doc.apply(&StenoEdit {
             backspaces: 3,
+            backspace_keys: 3,
             text: "dog".to_owned(),
             raw_ranges: vec![],
         });
@@ -367,6 +401,7 @@ mod tests {
         let mut doc = document("KATTKOG", vec![(0, 7)], 3);
         doc.apply(&StenoEdit {
             backspaces: 0,
+            backspace_keys: 0,
             text: " ".to_owned(),
             raw_ranges: vec![],
         });
@@ -379,6 +414,7 @@ mod tests {
         let mut doc = document("ab", vec![], 2);
         doc.apply(&StenoEdit {
             backspaces: 99,
+            backspace_keys: 99,
             text: "z".to_owned(),
             raw_ranges: vec![],
         });
@@ -391,6 +427,7 @@ mod tests {
         let mut doc = document("cat dog", vec![], 3);
         doc.apply(&StenoEdit {
             backspaces: 0,
+            backspace_keys: 0,
             text: " TPHRPBLG".to_owned(),
             raw_ranges: vec![(1, 9)],
         });
@@ -435,6 +472,7 @@ mod tests {
         let mut doc = document("\u{00E9}\u{00E9} KAT", vec![(5, 8)], 0);
         doc.apply(&StenoEdit {
             backspaces: 0,
+            backspace_keys: 0,
             text: "x".to_owned(),
             raw_ranges: vec![],
         });

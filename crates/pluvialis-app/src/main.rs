@@ -135,8 +135,8 @@ impl PluvialisApp {
 
 impl eframe::App for PluvialisApp {
     // Non-painting per-frame work belongs in `logic`, painting in `ui`.
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.live.pump_machine();
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.live.pump_machine(ctx);
     }
 
     // egui 0.35 replaced `update(&Context)` with `ui(&mut Ui)`. Most egui

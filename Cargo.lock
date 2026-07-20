@@ -2656,6 +2656,7 @@ dependencies = [
  "log",
  "pluvialis-core",
  "pluvialis-machine",
+ "pluvialis-output",
  "serde_json",
  "windows",
 ]
@@ -2684,6 +2685,11 @@ dependencies = [
 [[package]]
 name = "pluvialis-output"
 version = "0.1.0"
+dependencies = [
+ "log",
+ "thiserror 2.0.19",
+ "windows",
+]
 
 [[package]]
 name = "pluvialis-script"

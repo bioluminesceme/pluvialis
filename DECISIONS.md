@@ -46,6 +46,42 @@ bottom on every stroke and makes working mid document impossible.
 **Rejected:** never sticking, which stops the text following the user while they
 write forwards, the common case.
 
+### Backspaces are dropped when focus changes mid correction
+
+**Chosen:** if a batch's destination differs from the previous batch's, its
+backspaces are discarded and only the insertion is delivered.
+
+**Rationale:** backspaces refer to text the *previous* batch wrote. If that went
+to Notepad and this one goes to our document (or the reverse), deleting would
+eat characters this program never wrote, in someone else's document. Losing a
+correction is recoverable; silently deleting a stranger's text is not.
+
+**Consequence:** a retroactive correction that straddles an alt-tab leaves the
+old word in place and writes the corrected one after it. Rare, visible, and
+fixable by hand, which is the right failure direction.
+
+### Key combos only fire when another window has focus
+
+**Chosen:** `{#Control_L(Left)}` is sent only when typing into another
+application. When Pluvialis has focus it is logged and skipped.
+
+**Rejected:** synthesising the keystrokes anyway, which would send them to our
+own text widget. No dictionary entry means "press Control+Left inside
+Pluvialis's document"; they all mean the application being written into.
+
+**Open question for the user:** whether some combos should act on our document
+too (Home, End, arrows would all be meaningful). Left unimplemented rather than
+guessed at.
+
+### Text is sent as Unicode, combos as virtual keys
+
+**Chosen:** `KEYEVENTF_UNICODE` for text, virtual key codes for combos.
+
+**Rationale:** text means characters, and Unicode events are independent of the
+user's keyboard layout, so a Dutch layout and a US layout produce identical
+output. Combos mean physical keys, so they have to be virtual key codes.
+Navigation keys carry the extended-key flag, which some applications read.
+
 ### Manually typed text is never red
 
 **Chosen:** text the user types by hand carries no raw-steno range, and the
