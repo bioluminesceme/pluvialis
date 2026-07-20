@@ -73,6 +73,10 @@ Each milestone in `PLAN.md` names its own check. Two deserve emphasis because th
 - **M4b soak test:** run with no writer attached for ten minutes. Status stays "Searching", one connect attempt per second, CPU near idle, and **handle count flat**. A rising handle count means the Python's `disconnect()` bug was reproduced.
 - **M8 hardware matrix:** app-then-writer, writer-then-app, mid-sentence unplug and replug, writer power-cycle. All four must reach connected with no clicks. If any needs user action, the project has not met its goal.
 
+## Read `thingstonote.md`
+
+`thingstonote.md` collects the traps: places where the correct code looks like a bug, where Plover's code looks fine and is broken, and where an instinct to tidy something will break it. Several entries exist specifically because the urge to "fix" them is strong. Read the section for whichever milestone you are on, before writing that milestone's code rather than after debugging it.
+
 ## Reference material
 
 `reference/` holds complete protocol specs transcribed from working implementations, so you should not need to read Python to write the Rust:

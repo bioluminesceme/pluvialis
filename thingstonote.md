@@ -1,0 +1,109 @@
+# Things to note
+
+Traps a fresh session will walk into. Each one is something that looks wrong and is right, looks right and is wrong, or is invisible until it costs an hour.
+
+Organised by where you will hit it. Read the section for the milestone you are on.
+
+---
+
+## The kind of trap this file is about
+
+Several of these are cases where **the correct code looks like a bug**. If you find yourself "cleaning up" something in this list, stop: it was deliberate and it is documented here precisely because the instinct to fix it is strong.
+
+The opposite case also appears: code in Plover's Python that looks fine and is actually broken. We do not copy it.
+
+---
+
+## Windows API (M4b, Stenograph USB)
+
+**`cbSize` is the struct size, not the buffer size.** In the `SetupDiGetDeviceInterfaceDetailA` call, `SP_DEVICE_INTERFACE_DETAIL_DATA_A.cbSize` must be **5** on x64 (a `DWORD` plus one `CHAR`, packed), even though you allocated a much larger buffer. Win32 requires exactly this. Setting it to the allocated size yields `ERROR_INVALID_USER_BUFFER` and the failure gives you no hint about why.
+
+**`CREATE_ALWAYS | CREATE_NEW` is not a flags bug, but do not copy it.** The Python passes `2 | 1 == 3` to `CreateFileA`, and 3 happens to be `OPEN_EXISTING`. It works entirely by numeric coincidence. Write `OPEN_EXISTING` in Rust. If you see the Python and "fix" it to a real flag combination, you will change the value and break it.
+
+**The first `SetupDiGetDeviceInterfaceDetailA` call is expected to fail.** You call it with a null buffer to learn the required size, and it fails with `ERROR_INSUFFICIENT_BUFFER (0x7A)`. That is the success path. Only treat any *other* error as real.
+
+**`ERROR_NO_MORE_ITEMS (0x103)` from `SetupDiEnumDeviceInterfaces` means "no writer plugged in".** This is the normal idle state, not an error. It happens once per second forever while the machine is off. Log it at trace level at most, never warn, or the log becomes unreadable and the user thinks something is broken.
+
+**Close the handle before invalidating it.** Plover's `disconnect()` does it backwards:
+```python
+self._usb_device = INVALID_HANDLE_VALUE   # real handle now lost
+if not CloseHandle(self._usb_device):     # closes -1, fails, raises
+```
+This leaks a handle on every disconnect. In a forever-retry loop that is a slow resource exhaustion. Take the handle out first, then close it. The M4b soak test (ten minutes disconnected, handle count flat in Task Manager) exists solely to prove we did not repeat this.
+
+---
+
+## Stenograph protocol (M4b)
+
+**`data_length` includes the padding.** Payloads are zero-padded to a multiple of 8, and the length is computed *after* padding. Do not compute it from the unpadded data.
+
+**Error code 8, `NO_REALTIME_FILE`, is completely normal.** It means the user has not started writing yet. Same for code 9, `FINISHED_READING_CLOSED_FILE`. Both are routine, both mean "reset state and keep polling", neither should surface to the user as a problem. Treating 8 as a failure produces software that looks broken whenever it is merely idle.
+
+**Strokes read before `realtime` is true are discarded on purpose.** When you first open `REALTIME.000` there is a backlog already in the file. You read it, advance the offset, and throw it away, until a zero-length response tells you that you have caught up to live. This looks like a bug ("we are receiving strokes and ignoring them") and is not. Emitting them would dump the user's previous session's text into the document on every connect.
+
+**The steno byte bit order runs high to low.** Each of the 4 steno bytes has its top two bits always set, and the low 6 bits are keys where **bit 5 (value 32) is the first key in the row and bit 0 (value 1) is the last**. It is `1 << (5 - j)`, not `1 << j`. Get this backwards and every stroke mirrors into a different, plausible-looking, wrong stroke.
+
+**Response must echo the request's sequence number and packet type.** If it does not, that is a protocol violation: reset the connection rather than trying to interpret the packet.
+
+---
+
+## Gemini PR (M4a)
+
+**The duplicate keys are not redundancy to optimise away.** `S1-`/`S2-` are the two halves of the S key, `*1` through `*4` the four star keys, `#1` through `#C` the number bar segments. All 42 chart entries are distinct machine keys. Collapsing them to `S-`, `*`, `#` is the **keymap layer's** job, which is exactly why the keymap layer must exist before this machine is written. Hardcoding the collapse in the Gemini decoder feels simpler and will make every later machine wrong.
+
+**The bit test is `b & (0x80 >> j)` for `j` in 1..8, and the chart index is `i * 7 + j - 1`.** Seven bits per byte, not eight, because the MSB is the framing marker. The off-by-one here is very easy and produces strokes that are wrong but look reasonable.
+
+**Do not hold candidate serial ports open.** Auto-detection means opening ports to see whether steno comes out. A port you hold is a port other software cannot use. Open, sniff for a valid packet, and release promptly if it is not a steno device. Remember the VID/PID that worked so later scans go straight to it.
+
+---
+
+## Dictionaries and formatting (M1, M2)
+
+**`LONGEST_KEY` is 15, not the usual 10.** Measured from `cb_dictionary_full.json`. The translator's stroke history window must accommodate it or long entries silently never match.
+
+**Never silently drop an unrecognised meta command.** Log it by exact string. A dropped meta does not crash, it produces subtly wrong text that the user discovers hours later in a document. For someone writing at speed, that is the worst available failure mode. `pluvialis check` reporting zero unknowns across both dictionaries is the M2 acceptance test.
+
+**Do not hand-roll English suffix orthography.** `{^ing}` on "run" must give "running", not "runing". Port the rules from `F:\Steno\plover\plover\orthography.py`. This looks like a small string operation and is a large pile of accumulated special cases.
+
+**Key combo names are X11 keysyms, not Win32 names.** `Control_L`, `Page_Down`, `BackSpace`. They need mapping to virtual key codes. They also nest: `{#Control_L(Shift(Left))}` means hold Control, hold Shift, press Left, so the parser needs real nesting, not a split on parentheses.
+
+**98.6% of entries are plain text with no meta at all.** If the formatter is turning into a large subsystem, re-read `reference/DICTIONARY-AUDIT.md`. The real surface is small and measured.
+
+---
+
+## Output routing and the live view (M3, M5)
+
+**Exactly one destination per output batch, never both.** Focused window decides: our document, or `SendInput` to another app. This is not a preference, it is what makes double-typing structurally impossible instead of an intermittent bug you chase forever. Any refactor that lets both paths fire has broken the core design.
+
+**Red raw-steno ranges live in the document model, not a transient buffer.** That is what makes red survive indefinitely and disappear correctly when undone. Storing them in a render-time buffer will look identical in early testing and lose colours as soon as anything scrolls or reflows.
+
+**egui's layouter runs at least once per frame.** Memoise the highlight computation. Recomputing colour ranges over a long document 60 times a second will be the first performance problem you meet, and it will present as vague UI sluggishness rather than anything pointing at the layouter.
+
+---
+
+## Project shape
+
+**This is not a Plover fork and Plover is GPL.** Read Plover's source for semantics, never copy code. The `reference/` specs exist so you mostly do not need to open it at all.
+
+**Do not reintroduce a machine picker as a helpful default.** The entire reason this project exists is that Plover makes the user select a machine and then gives up when it is absent. Auto mode with a forever-retry scanner is the point. A dialog, a manual reconnect button as the primary path, or any "machine not found, giving up" branch defeats the goal. (A pinned-machine override in settings is fine as an escape hatch.)
+
+**The plan says "hardcoded to Stenograph USB" in its early framing.** That was superseded during planning: it became the Auto scanner once more protocols entered scope, which solves the same pain better. `PLAN.md` notes this, but if you see the two phrasings and they seem to conflict, Auto scanner is current.
+
+**Test with the Peregrine, not the Luminex.** From M4a onward there is real hardware available. The Luminex needs a driver install and only enters at M8. Do not build fake input scaffolding beyond the small M3 dev box, and do not wait for the Luminex to test anything.
+
+**The dictionary files are shared with a working Plover install.** They live in `C:\Users\Corien\AppData\Local\plover\plover\` and official Plover stays installed as the user's fallback. Never move, rename, or restructure them. Back up before the first write from Pluvialis. Editing entries in place is expected and fine.
+
+**At M8, close official Plover first.** Two programs cannot hold the writer handle simultaneously. If the first hardware test fails mysteriously, check this before anything else.
+
+**The name is settled.** Dotterel was the first choice and is taken by an existing Android steno app. Pluvia is heavily used. Pluvialis was checked and is clear. No renaming.
+
+---
+
+## House style
+
+- **UTF-8 on every read and write.** An encoding error means the encoding is wrong; fix it, never mask it with lossy replacement.
+- **No em dashes** anywhere: prose, comments, commit messages, UI strings.
+- **No emoji** in code or terminal output.
+- **`py` launcher** for Python helper scripts, never `python3`.
+- **Warnings are failures.** `cargo clippy` clean is part of every milestone, not a cleanup pass at the end.
+- **Comments state constraints, not narration.** "cbSize must be 5 here per Win32" earns its place; "open the device" does not.

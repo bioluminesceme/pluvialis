@@ -195,6 +195,7 @@ Release chores whenever you decide to publish: LICENSE (GPL-3.0 is the natural f
 
 **In this repo, written before M0 and ready to use:**
 - `CLAUDE.md` — architecture, conventions, working agreement
+- `thingstonote.md` — the traps, organised by milestone. Read your milestone's section before writing its code.
 - `reference/STENOGRAPH-PROTOCOL.md` — complete Luminex USB spec for M4b, including the three bugs to avoid
 - `reference/GEMINI-PR-PROTOCOL.md` — complete Peregrine spec for M4a
 - `reference/DICTIONARY-AUDIT.md` — measured meta-command usage, which bounds the M2 formatter
