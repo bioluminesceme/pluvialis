@@ -160,7 +160,27 @@ Formatting reformats the whole history per call rather than incrementally, tradi
 Implement exactly the meta set your dictionaries use, verified by the audit above: `{^suffix}`, `{prefix^}`, `{^infix^}`, `{&glue}`, `{-|}`, `{>}`, punctuation (`{.}` `{,}` `{?}` `{!}` `{;}` `{:}`), `{}`, `{#key combos}`, `{*!}`, `{*-|}`, `{*}`, `{~|}`, and the `{MODE:...}`/`{PLOVER:...}` entries present. Anything unrecognized is logged by name, never silently dropped. Orthography rules for suffixes (the "-ing" doubling rules and friends).
 **Verify:** a test corpus of stroke sequences with expected output, including every meta command found in your two dictionaries. `pluvialis check` reports zero unknown metas across both files.
 
-### M3. Live-type window
+### M3. Live-type window  <- NEXT, start here
+
+**What already exists and should be used, not rebuilt:**
+- `pluvialis_core::Translator` holds the history and returns a `Delta` per stroke.
+- `pluvialis_core::format::format(&[Translation]) -> Formatted` gives the final text, plus:
+  - `raw_ranges: Vec<(usize, usize)>` — byte ranges of untranslated strokes, exactly what the layouter needs to paint red. Already tested for correctness against leading spaces.
+  - `events: Vec<Event>` — key combos and `PLOVER:` commands, to be consumed in M5. In M3 they can be logged.
+- `Stroke::render_outline` gives the tape strip its text. Remember canonical rendering is not what was typed (`TPHRPBLG` shows as `TPHR-PBLG`).
+
+**Suggested shape:**
+1. An `AppState` owning `DictionaryStack`, `Translator`, and the last `Formatted`.
+2. On each stroke: `translator.translate(...)`, then reformat the whole history. Do not try to apply the `Delta` incrementally to the widget; formatting is a pure function of history and costs microseconds. The `Delta` matters in M5, where it becomes backspaces plus text for `SendInput`.
+3. `egui::TextEdit::multiline` with `.layouter()`. Build a `LayoutJob` with one section per span, red for anything inside a `raw_range`. **Memoize it**: the layouter runs at least once per frame, so recomputing over a long document at 60 fps is the first performance problem you will meet, and it presents as vague sluggishness rather than anything pointing at the layouter.
+4. Tape strip: a right hand panel, fixed narrow width, newest at the bottom, showing raw steno and its translation.
+5. Temporary dev input (a text box taking a raw outline, Enter to submit) so the pipeline is exercisable before M4a. Remove it once the Peregrine works.
+
+**Do not forget:** egui 0.35 uses `App::ui(&mut self, ui: &mut egui::Ui, frame)`, not `App::update(ctx)`. Per-frame work that does not paint goes in `App::logic(ctx, frame)`. Published examples all show the old API.
+
+**Verify:** type `KAT` in the dev box, "cat" appears; a nonsense outline appears red as raw steno and stays red; `*` removes it; `WEL` then `KO*PL` visibly rewrites "well" into "welcome"; spacing and capitalization after `{.}` are right.
+
+### M3 original scope (for reference)
 Main window: `TextEdit` with a custom layouter, tape strip on the right (recent strokes, raw steno plus translation), connection status bar. Raw untranslated strokes render red. Document model with red-range tracking and correct backspace handling. Temporary dev input: a text box where you type a raw stroke and press Enter, so the pipeline is exercisable before any machine exists (removed once M4a lands).
 **Verify:** type `KAT` in the dev box, "cat" appears; type nonsense like `TPHRPBLG`, it appears red as raw steno; type `*`, the red text disappears; correct spacing and capitalization after punctuation.
 

@@ -12,7 +12,17 @@ Named after *Pluvialis*, the golden-plover genus (Latin *pluvia*, rain). Checked
 
 ## Status
 
-**Nothing is built yet.** The next session starts at M0 in `PLAN.md`: install rustup, create the Cargo workspace, first commit.
+**M0, M1 and M2 are done. M3 (the live type window) is next**; `PLAN.md` has a "start here" block for it listing what already exists so it is not rebuilt.
+
+The translation core is complete and measured against the real dictionaries: 101,407 entries load in 52 ms, lookups run 400 ns to 4 us, and `pluvialis check` formats every entry in 52 ms and exits 0. Latency is a settled non issue; do not re-litigate it.
+
+Working commands (`target\release\pluvialis-app.exe <cmd>`):
+- `lookup <OUTLINE>...` — answer from the real dictionaries, with timings
+- `check [DICT...]` — format every entry, report unimplemented meta commands. Exits 0 on the known baseline, non zero on anything new, so it is a regression test.
+- `clean [--write] [DICT...]` — remove entries whose keys are not valid steno. Dry run unless `--write`.
+- no arguments — opens the GUI
+
+Run tests with `cargo test --workspace`, lint with `cargo clippy --workspace --all-targets -- -D warnings`. Both must be clean before a milestone is done.
 
 ## The user
 
