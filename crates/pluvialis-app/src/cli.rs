@@ -11,14 +11,21 @@ use std::time::Instant;
 
 use pluvialis_core::{Dictionary, DictionaryStack, Stroke, Translation, Translator};
 
-/// Where the user's dictionaries live. These are shared in place with her
-/// working Plover install and are never copied or modified.
-pub(crate) const DICTIONARY_DIR: &str = r"C:\Users\Corien\AppData\Local\plover\plover";
-
-/// Priority order, highest first, mirroring her plover.cfg. Only the JSON ones
-/// are listed here. `jeff-phrasing.py` and any other Python dictionary in the
-/// same directory are discovered separately by the GUI and loaded disabled.
-pub(crate) const DICTIONARIES: [&str; 2] = ["cb_dictionary_full.json", "corien-dutch.json"];
+/// The dictionaries Pluvialis owns, in priority order, highest first.
+///
+/// These live in the library rather than her Plover folder; see `library`. The
+/// library is created and seeded on first use, so a CLI command run before the
+/// GUI has ever started still finds dictionaries.
+///
+/// `clean --write` writes to these, and that is the point: the file it edits is
+/// one nothing else reads.
+fn library_dictionaries() -> Vec<PathBuf> {
+    if let Err(e) = crate::library::ensure() {
+        eprintln!("could not prepare the dictionary library: {e}");
+        return Vec::new();
+    }
+    crate::library::json_dictionaries()
+}
 
 pub fn run(args: &[String]) -> std::process::ExitCode {
     match args.first().map(String::as_str) {
@@ -107,10 +114,7 @@ fn machine(args: &[String]) -> std::process::ExitCode {
 fn check(args: &[String]) -> std::process::ExitCode {
     let explicit: Vec<PathBuf> = args.iter().map(PathBuf::from).collect();
     let targets: Vec<PathBuf> = if explicit.is_empty() {
-        DICTIONARIES
-            .iter()
-            .map(|name| PathBuf::from(DICTIONARY_DIR).join(name))
-            .collect()
+        library_dictionaries()
     } else {
         explicit
     };
@@ -216,10 +220,7 @@ fn clean(args: &[String]) -> std::process::ExitCode {
         .collect();
 
     let targets: Vec<PathBuf> = if explicit.is_empty() {
-        DICTIONARIES
-            .iter()
-            .map(|name| PathBuf::from(DICTIONARY_DIR).join(name))
-            .collect()
+        library_dictionaries()
     } else {
         explicit
     };
@@ -292,8 +293,11 @@ fn lookup(outlines: &[String]) -> std::process::ExitCode {
 
     let started = Instant::now();
     let mut stack = DictionaryStack::new();
-    for name in DICTIONARIES {
-        let path = PathBuf::from(DICTIONARY_DIR).join(name);
+    for path in library_dictionaries() {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
         match Dictionary::load(&path) {
             Ok(dictionary) => {
                 let bad = dictionary.bad_keys().len();

@@ -297,8 +297,28 @@ impl LiveView {
     /// preventing startup: a program that refuses to open because one of two
     /// dictionaries moved is worse than one that says so and keeps working.
     fn load_dictionaries(&mut self) {
-        for name in crate::cli::DICTIONARIES {
-            let path = std::path::Path::new(crate::cli::DICTIONARY_DIR).join(name);
+        // The library, not her Plover folder. Seeded from it on first run and
+        // owned by Pluvialis afterwards; see `library`.
+        match crate::library::ensure() {
+            Ok(seeded) if !seeded.is_empty() => {
+                log::info!(
+                    "seeded the dictionary library with {}",
+                    seeded.join(", ")
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("could not prepare the dictionary library: {e}");
+                self.load_error = Some(format!("dictionary library: {e}"));
+                return;
+            }
+        }
+
+        for path in crate::library::json_dictionaries() {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
             match Dictionary::load(&path) {
                 Ok(dictionary) => {
                     let bad = dictionary.bad_keys().len();
@@ -334,20 +354,7 @@ impl LiveView {
     /// there in the list with a checkbox, and nothing about her writing changes
     /// until she ticks one. Do not flip this default without asking.
     fn load_python_dictionaries(&mut self) {
-        let directory = std::path::Path::new(crate::cli::DICTIONARY_DIR);
-        let Ok(entries) = std::fs::read_dir(directory) else {
-            log::warn!("could not scan {} for dictionaries", directory.display());
-            return;
-        };
-
-        let mut found: Vec<std::path::PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "py"))
-            .collect();
-        found.sort();
-
-        for path in found {
+        for path in crate::library::python_dictionaries() {
             match pluvialis_python::PythonDictionary::load(&path) {
                 Ok(mut dictionary) => {
                     use pluvialis_core::ProgrammaticDictionary;

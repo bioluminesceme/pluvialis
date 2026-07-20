@@ -38,7 +38,10 @@ Run tests with `cargo test --workspace`, lint with `cargo clippy --workspace --a
 - Writes steno daily. This is a tool she will rely on, not a toy.
 - Hardware: **Luminex CSE** (Stenograph USB) and a **Peregrine** keyboard (Gemini PR over USB serial). **The Luminex is her primary machine**; the Peregrine is only "much faster to set up". Both work as of M4b. Keep both attached when testing Auto mode, since that is what exercises the priority order.
 - Windows 11 is the 99% case. Linux is a distant maybe. macOS is not a target.
-- Her dictionaries live in `C:\Users\Corien\AppData\Local\plover\plover\` and are **shared with her working Plover install, not copied**. Official Plover stays installed as a fallback. Never move, rename, or restructure those files. Editing entries in place is expected; back up before the first write.
+- **Pluvialis owns its dictionaries, in `F:\Steno\Pluvialis\dictionaries\`.** Decided by the user on 2026-07-20: "any dictionaries we open in Pluvialis get saved into a special folder. User can edit them in VSCode from there if needed, and Pluvialis has full access too. We own them." The folder is seeded **once**, from `C:\Users\Corien\AppData\Local\plover\plover\`, when it does not yet exist; after that nothing re-copies into it, or a dictionary she removed would come back on the next start. Adding a dictionary means putting the file in the folder.
+- **This supersedes the earlier "shared in place, never copied" rule**, which was correct until she changed it. The cost is real and she accepted it knowingly: the two copies drift, so editing her Plover copy no longer changes Pluvialis and vice versa.
+- Her Plover folder is now read **only** to seed on first run, and never written to.
+- **Her actual `plover.cfg` list**, read on 2026-07-20 rather than assumed: `cb_dictionary_full.json` (enabled), `cb_dictionary.json` (disabled), `mouse.json` (disabled), `jeff-phrasing.py` (**enabled**). Earlier notes in this project claimed the pair `cb_dictionary_full.json` plus `corien-dutch.json` "mirrors her plover.cfg". That was wrong: `corien-dutch.json` is not in her Plover config at all.
 
 ## Architecture
 
@@ -96,7 +99,9 @@ Each milestone in `PLAN.md` names its own check. Two deserve emphasis because th
 
 ## Writing to the user's dictionaries
 
-Her dictionary files are shared with a working Plover install. Anything that modifies them follows the pattern established by `pluvialis-core::clean`:
+Writes now land on Pluvialis's own copies in `dictionaries\`, which is the whole reason the library exists: nothing else reads the file being edited. Her Plover folder is never written to.
+
+That lowers the stakes but does not change the rules, because these are still the only copy of her working vocabulary. Anything that modifies a dictionary follows the pattern established by `pluvialis-core::clean`:
 
 1. **Dry run by default.** Writing is opt in (`--write`), never a side effect of running a report.
 2. **Verify before writing.** Reparse the result and check entry count and every retained value. On any mismatch, write nothing and return an error.

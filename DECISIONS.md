@@ -288,3 +288,66 @@ copying question is settled:
 - Outlines come back as raw strings. Whoever builds a `Dictionary` from them
   must decide whether unparseable keys go to `bad_keys`, as `Dictionary::load`
   does for JSON.
+
+### Pluvialis owns its dictionaries
+
+**Decided by the user, 2026-07-20:** "Better to copy any dictionary that gets
+imported to the program folder so we never accidentally edit a source that is
+also used by something else." Confirmed when asked which reading she meant: "any
+dictionaries we open in Pluvialis get saved into a special folder. User can edit
+them in VSCode from there if needed, and Pluvialis has full access too. We own
+them."
+
+This reverses the earlier decision to share her files in place with Plover, and
+it was asked about rather than assumed, because she had previously been explicit
+that her main dictionary should stay a solo file she edits in VS Code. It still
+is. It just lives in `F:\Steno\Pluvialis\dictionaries\` now.
+
+**The cost was stated before she chose, and she chose it anyway:** the copies
+drift. Editing her Plover copy no longer reaches Pluvialis, and vice versa.
+
+**Seeding happens once,** when the folder does not exist. Not on every start: a
+dictionary she deliberately removed would otherwise come back. Once created, the
+folder is hers, and adding a dictionary means putting the file in it.
+
+A side effect worth naming: the app no longer scans her Plover folder at all, so
+the class of bug where it executed a `.py` that was never meant to be a
+dictionary is gone at the root rather than guarded against. The screen stays as
+defence in depth, and it is what decides which `.py` files are worth seeding.
+
+**Priority order is alphabetical by file name.** Predictable beats clever when
+the user is the one dropping files in the folder, and it happens to preserve the
+seeded pair's order, which is load bearing. A test pins that coincidence so it
+fails loudly rather than silently if a future dictionary needs to outrank
+`cb_dictionary_full`.
+
+### Her plover.cfg says something different from what this project assumed
+
+**Found on 2026-07-20 by reading it, and the note it corrects had been repeated
+several times.** `DICTIONARIES` was documented as "mirroring her plover.cfg"
+with `cb_dictionary_full.json` and `corien-dutch.json`. Her actual config is:
+
+    cb_dictionary_full.json   enabled
+    cb_dictionary.json        disabled
+    mouse.json                disabled
+    jeff-phrasing.py          ENABLED
+
+So `corien-dutch.json` is not in her Plover config at all, and `jeff-phrasing.py`
+is switched on there.
+
+The second half matters more than the first. Pluvialis loads Python dictionaries
+disabled, and the comment justifying that cites her saying she is not sure she
+wants jeff-phrasing. What she actually said was "Don't make the Jeff's phrasing
+native please, I'm not sure I'll use it yet", which was about the Rust port. Her
+config suggests she writes with the dictionary daily. **Not flipped, because the
+default carries an explicit instruction not to change it without asking, and
+because being wrong here changes what her writing produces.** Raised with her.
+
+### RTF/CRE wiring is parked
+
+**Decided by the user, 2026-07-20:** "Add RTF to plan for later, I don't use it
+and if I don't release this on github implementation is not needed."
+
+The reader stays: it is written, tested, and costs nothing dormant. Only the
+wiring is deferred, and it is on the post-1.0 list where a public release would
+need it, since RTF/CRE is how commercial dictionaries ship.

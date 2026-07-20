@@ -100,11 +100,12 @@ Plover's own HID implementation already works this way (a device scan loop with 
 
 ## Dictionary story
 
-- **JSON stays first-class.** Plover JSON is loaded natively, no conversion, no format change. Your existing files in `C:\Users\Corien\AppData\Local\plover\plover\` are read in place (shared, not copied), so official Plover keeps working as a fallback.
-- **Lua is the scripty layer.** A `.lua` dictionary in the list exposes `lookup(strokes) -> string | nil` and optionally `reverse_lookup(text)`. It is called only when the JSON dictionaries above it miss, so the cost is near zero in normal writing.
-- **Conversion tools** ship as subcommands of the same exe, since you asked for them built in:
-  - `pluvialis convert rtf <in.rtf> <out.json>` (RTF/CRE, the format most commercial dictionaries come in)
+- **Pluvialis owns its dictionaries**, in `F:\Steno\Pluvialis\dictionaries\`. Decided 2026-07-20. Seeded once from your Plover folder, yours to edit in VS Code from there afterwards, and never shared with another program. Adding a dictionary means putting the file in the folder.
+- **JSON stays first-class.** Plover JSON is loaded natively, no conversion, no format change.
+- **Python is the scripty layer.** Plover's own `.py` dictionaries run unmodified, and appear in the list switched off until you tick them.
+- **Tools** ship as subcommands of the same exe:
   - `pluvialis check <dict>` (report entries using meta commands we do not implement, so nothing fails silently)
+  - `pluvialis clean [--write] <dict>` (remove keys that are not valid steno)
 - **jeff-phrasing needs no port.** It runs as the Python file it already is. A native Rust port was built and then removed on 2026-07-20: measurement showed Python answers in microseconds, so the port bought nothing and cost a rewrite per dictionary. See M6.
 
 ## Documents
@@ -303,8 +304,13 @@ dictionaries. What actually happened:
 
 **Still open in M6:**
 
-- `convert rtf` is being built now. Still a genuine gap for importing commercial
-  dictionaries. `convert json-to-lua` is dropped with the Lua host.
+- RTF/CRE: the reader is built, the wiring is parked at the user's request.
+  Moved to the post-1.0 list.
+- **`jeff-phrasing.py` is enabled in her real `plover.cfg`, and Pluvialis loads
+  Python dictionaries disabled.** Her instruction was about the native port
+  ("Don't make the Jeff's phrasing native please, I'm not sure I'll use it
+  yet"), which is not the same as not wanting the dictionary. Needs a direct
+  answer before the default is flipped.
 - Programmatic dictionaries are consulted **after** all JSON ones rather than
   interleaved by priority. Safe default (can only add behaviour, never shadow an
   existing outline), but real interleaving is a feature.
@@ -345,6 +351,7 @@ Not needed for your setup, but wanted for a public GitHub release. Each is self-
 4. **Keyboard machine** (fiddly) — global low-level Windows hook with key suppression, for writing steno on QWERTY.
 5. **Stentura** (the heavy one) — sequenced packets with checksums, for old Stentura writers.
 6. **Linux build** — the core, serial and HID crates are already portable; this is a Stenograph libusb transport plus an X11/Wayland output layer.
+7. **RTF/CRE import.** **Parked by the user on 2026-07-20:** "Add RTF to plan for later, I don't use it and if I don't release this on github implementation is not needed." The reader is already built and tested (`pluvialis-core::rtfcre`, 40 tests plus 10 written independently of it), so what remains is only the wiring: a way to import a file into the library, and two decisions recorded in `DECISIONS.md` (what the formatter does with `=undo` and `=macro_name`, and whether unparseable outlines go to `bad_keys`). It matters for a public release, because RTF/CRE is how commercial dictionaries ship, and not at all for her own use.
 
 Release chores whenever you decide to publish: LICENSE (GPL-3.0 is the natural fit given the lineage), README with the supported-machines table, and a GitHub Actions job producing a signed Windows .exe.
 

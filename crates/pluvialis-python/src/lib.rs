@@ -63,6 +63,18 @@ pub enum PythonError {
 /// This is not a sandbox and is not trying to be. Anything that passes is still
 /// arbitrary code, exactly as in Plover. It only keeps the app from running
 /// files nobody asked it to run.
+/// Could this source act as a Plover dictionary, judged without running it?
+///
+/// For callers that need to sort dictionaries from ordinary scripts before
+/// deciding what to do with a file. See [`defines_lookup`] for why the question
+/// has to be answerable without executing anything.
+///
+/// A `true` here is not a promise that the file loads. It only means executing
+/// it is a reasonable thing to attempt.
+pub fn looks_like_a_dictionary(source: &str) -> bool {
+    defines_lookup(source)
+}
+
 fn defines_lookup(source: &str) -> bool {
     source.lines().any(|line| {
         let line = line.trim_start();

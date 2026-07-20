@@ -7,6 +7,7 @@ use std::process::ExitCode;
 
 mod cli;
 mod dictionaries;
+mod library;
 mod live;
 mod storage;
 
