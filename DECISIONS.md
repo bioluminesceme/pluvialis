@@ -351,3 +351,37 @@ and if I don't release this on github implementation is not needed."
 The reader stays: it is written, tested, and costs nothing dormant. Only the
 wiring is deferred, and it is on the post-1.0 list where a public release would
 need it, since RTF/CRE is how commercial dictionaries ship.
+
+### Pluvialis does contain Plover material, and the docs said otherwise
+
+**Raised by the user, 2026-07-20:** "We did copy a lot of Plover's logic right?
+So just copy their license to and say this is a Rust port of Plover??"
+
+She was right to push, and the claim she was pushing against was mine. `CLAUDE.md`
+had said Pluvialis "shares no code with" Plover since M0, and it was repeated
+through several milestones without being checked. Checking it found two pieces of
+Plover material:
+
+- `assets/american_english_words.txt`, **byte identical** to Plover's asset
+  (verified with `cmp`), 338,882 lines, embedded in the executable.
+- `orthography_rules.rs`, 38 orthography rules and their aliases transcribed from
+  `plover/system/english_stenotype.py`, with the file's own header saying so.
+
+So Pluvialis is a derivative work in part, and GPL is an obligation rather than
+only a preference.
+
+**The licence needed no change.** Plover is GPL-2.0-**or-later**, so its material
+may be used under GPL-3, and GPL-3.0-or-later was already declared. The
+conclusion was right for a reason that had not been established.
+
+**"A Rust port of Plover" was rejected**, though the user offered it. It claims
+more derivation than exists: the translator, formatter, machine layer, document
+model and storage are independently designed, and several behave differently on
+purpose, including the machine scanner that this project exists to fix. It would
+also attribute this program's bugs to Plover's authors. `ATTRIBUTION.md` states
+what came from where, and is now the authoritative record; the source files carry
+the same notice so provenance travels with them.
+
+The general lesson is the one already in this project's working agreement, and
+this is the third time it has paid out: a confident claim in a document is not
+evidence. `cmp` is.

@@ -4,7 +4,9 @@ Project context for Claude Code. Read this and `PLAN.md` before doing anything.
 
 ## What this is
 
-**Pluvialis** is a stenography program in Rust for Windows. It is a standalone program, **not a fork of Plover**. It reuses Plover's protocol knowledge and algorithm design, both read from Plover's source, but shares no code with it.
+**Pluvialis** is a stenography program in Rust for Windows. It is a standalone program, **not a fork or a port of Plover**, but it is **not wholly independent of it either**. Two pieces of material are copied from Plover: the American English word list (byte identical) and the 38 English orthography rules. Everything else is independently written, with Plover's source read as a specification for protocols and behaviour.
+
+**The earlier claim in this file that Pluvialis "shares no code with" Plover was wrong**, and was repeated for several milestones before being checked on 2026-07-20. See `ATTRIBUTION.md`, which is the authoritative record and must be updated if anything else is ever copied. The licence is unaffected: Plover is GPL-2.0-**or-later**, so its material may be used under GPL-3.
 
 It exists because Plover's Stenograph plugin cannot recover when the writer is not present at the moment capture starts, which forces the user through a restart-and-reselect ritual every session. See `reference/STENOGRAPH-PROTOCOL.md` section 5 for the three specific bugs.
 
@@ -72,11 +74,15 @@ Never both. That is what makes double-typing structurally impossible rather than
 answers land in the same place: Plover is `GPL-2.0-or-later`, and the "or later"
 makes GPL-3 compatible with it.
 
-The choice is free rather than inherited. Pluvialis contains no Plover code, so
-nothing obliges it to be GPL at all; it is GPL because the user chose it. Keep it
-that way: **read Plover for reference, never copy from it.** The moment code is
-copied, the licence stops being a choice and the "independently written" claim in
-this file becomes false.
+**The choice is not entirely free, contrary to what this section said when it was
+first written.** Pluvialis embeds Plover's American English word list and
+orthography rules, so it is a derivative work in part and GPL is an obligation,
+not only a preference. GPL-3.0-or-later satisfies it because Plover is
+GPL-2.0-**or-later**.
+
+Copying more from Plover is permitted. Copying without recording it in
+`ATTRIBUTION.md` is not: that file is what keeps the licence claim honest, and it
+is now the authoritative statement of what came from where.
 
 `LICENSE` holds the canonical FSF text, fetched verbatim from gnu.org. Do not
 edit it. All five crates inherit `license.workspace = true`.

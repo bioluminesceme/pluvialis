@@ -22,6 +22,10 @@ use crate::orthography_rules::{ALIASES, RULES};
 /// Plover's American English word list: `word frequency` per line, where a
 /// lower number means more prominent. Embedded so the program stays a single
 /// executable.
+///
+/// **A byte identical copy of Plover's asset**, 338,882 lines. Copyright Joshua
+/// Harlan Lifton and the Open Steno Project contributors, GPL-2.0-or-later, used
+/// under the "or later" clause. Recorded in `ATTRIBUTION.md`.
 static WORD_LIST: &str = include_str!("../assets/american_english_words.txt");
 
 static WORDS: LazyLock<HashMap<&'static str, u32>> = LazyLock::new(|| {
