@@ -35,6 +35,64 @@ pub const CHART: [&str; 42] = [
     "#7",  "#8", "#9", "#A", "#B", "#C",   "-Z",
 ];
 
+/// USB vendor IDs that belong to other steno protocols.
+///
+/// Confirmed on 2026-07-20: the user's Luminex enumerates as
+/// `VID_112B&PID_000D` and offers a "Stenograph Writer Serial Port" alongside
+/// its real protocol interface. That port is silent, so opening it here yields
+/// a connection that looks healthy and never produces a stroke. Worse, holding
+/// it open would block the Stenograph implementation from the same device.
+///
+/// A machine listed here is not unsupported. It is supported *elsewhere*.
+const OTHER_PROTOCOL_VIDS: [u16; 1] = [
+    0x112B, // Stenograph (Luminex CSE and relatives), handled by the Stenograph machine
+];
+
+/// USB vendor IDs known to speak Gemini PR, tried before unknown ports.
+const LIKELY_GEMINI_VIDS: [u16; 1] = [
+    0xFEED, // QMK default, which is what the user's Peregrine reports
+];
+
+/// Order candidate ports by how likely they are to be a Gemini PR keyboard,
+/// dropping any that belong to another protocol.
+///
+/// Split out from enumeration so the ranking is testable without hardware.
+fn rank_candidates(ports: Vec<serialport::SerialPortInfo>, preferred: Option<&str>) -> Vec<String> {
+    let rank = |port: &serialport::SerialPortInfo| -> Option<u8> {
+        // Exclusion is checked before preference on purpose. A remembered port
+        // must not be able to revive an excluded device: the machine on the
+        // other end can change while the port name stays the same.
+        let base = match &port.port_type {
+            serialport::SerialPortType::UsbPort(usb) => {
+                if OTHER_PROTOCOL_VIDS.contains(&usb.vid) {
+                    return None;
+                } else if LIKELY_GEMINI_VIDS.contains(&usb.vid) {
+                    1
+                } else {
+                    2
+                }
+            }
+            // Not USB, so not a modern steno keyboard, but not impossible.
+            _ => 3,
+        };
+
+        if Some(port.port_name.as_str()) == preferred {
+            Some(0)
+        } else {
+            Some(base)
+        }
+    };
+
+    let mut ranked: Vec<(u8, String)> = ports
+        .into_iter()
+        .filter_map(|port| rank(&port).map(|r| (r, port.port_name)))
+        .collect();
+
+    // Stable so ports of equal rank keep enumeration order.
+    ranked.sort_by_key(|(r, _)| *r);
+    ranked.into_iter().map(|(_, name)| name).collect()
+}
+
 /// Whether six bytes are correctly framed.
 pub fn is_valid_packet(packet: &[u8]) -> bool {
     packet.len() == PACKET_LEN && packet[0] & 0x80 != 0 && packet[1..].iter().all(|b| b & 0x80 == 0)
@@ -86,9 +144,8 @@ impl GeminiPr {
     /// Candidate ports, most likely first.
     ///
     /// There is no way to know a COM port is a steno keyboard without listening
-    /// to it, so ordering matters: the port that worked last, then USB serial
-    /// devices, then everything else.
-    fn candidates() -> Vec<String> {
+    /// to it, so ordering and exclusion both matter.
+    fn candidates(preferred: Option<&str>) -> Vec<String> {
         let ports = match serialport::available_ports() {
             Ok(ports) => ports,
             Err(e) => {
@@ -96,12 +153,7 @@ impl GeminiPr {
                 return Vec::new();
             }
         };
-
-        let (usb, other): (Vec<_>, Vec<_>) = ports
-            .into_iter()
-            .partition(|p| matches!(p.port_type, serialport::SerialPortType::UsbPort(_)));
-
-        usb.into_iter().chain(other).map(|p| p.port_name).collect()
+        rank_candidates(ports, preferred)
     }
 
     /// Turn buffered bytes into strokes, resynchronising if framing is lost.
@@ -159,12 +211,7 @@ impl Machine for GeminiPr {
     }
 
     fn connect(&mut self) -> Result<String, MachineError> {
-        let mut candidates = GeminiPr::candidates();
-        if let Some(preferred) = &self.preferred
-            && let Some(at) = candidates.iter().position(|p| p == preferred)
-        {
-            candidates.swap(0, at);
-        }
+        let candidates = GeminiPr::candidates(self.preferred.as_deref());
 
         if candidates.is_empty() {
             return Err(MachineError::NotAttached);
@@ -179,7 +226,19 @@ impl Machine for GeminiPr {
                 .timeout(READ_TIMEOUT)
                 .open()
             {
-                Ok(port) => {
+                Ok(mut port) => {
+                    // Assert DTR and RTS. A USB CDC device commonly treats DTR
+                    // as "a host is listening" and stays silent without it, so
+                    // the port opens, looks healthy, and delivers nothing. That
+                    // failure mode is indistinguishable from the user simply
+                    // not writing, which makes it expensive to diagnose.
+                    if let Err(e) = port.write_data_terminal_ready(true) {
+                        log::debug!("{name}: could not assert DTR: {e}");
+                    }
+                    if let Err(e) = port.write_request_to_send(true) {
+                        log::debug!("{name}: could not assert RTS: {e}");
+                    }
+
                     log::info!("opened {name} at {BAUD} baud");
                     self.port = Some(port);
                     self.buffer.clear();
@@ -233,6 +292,84 @@ mod tests {
         let keys = decode_keys(packet);
         let stroke = Keymap::gemini_pr().stroke(&keys).unwrap().unwrap();
         Stroke::render_outline(&[stroke])
+    }
+
+    fn usb_port(name: &str, vid: u16, pid: u16) -> serialport::SerialPortInfo {
+        serialport::SerialPortInfo {
+            port_name: name.to_owned(),
+            port_type: serialport::SerialPortType::UsbPort(serialport::UsbPortInfo {
+                vid,
+                pid,
+                serial_number: None,
+                manufacturer: None,
+                product: None,
+            }),
+        }
+    }
+
+    /// The user's actual hardware, as enumerated on 2026-07-20.
+    fn peregrine() -> serialport::SerialPortInfo {
+        usb_port("COM11", 0xFEED, 0x6060)
+    }
+    fn luminex_serial() -> serialport::SerialPortInfo {
+        usb_port("COM3", 0x112B, 0x000D)
+    }
+
+    /// The bug this fixes: with both machines attached, the Gemini scanner
+    /// would open the Luminex's serial port, report a healthy connection, and
+    /// never receive a stroke. It would also block the Stenograph
+    /// implementation from the same device.
+    #[test]
+    fn the_luminex_serial_port_is_never_a_gemini_candidate() {
+        let ranked = rank_candidates(vec![luminex_serial(), peregrine()], None);
+        assert_eq!(ranked, vec!["COM11"], "the Luminex must not be offered");
+    }
+
+    #[test]
+    fn the_luminex_is_excluded_even_when_it_is_the_only_port() {
+        let ranked = rank_candidates(vec![luminex_serial()], None);
+        assert!(
+            ranked.is_empty(),
+            "no Gemini keyboard is attached, so there is nothing to try"
+        );
+    }
+
+    #[test]
+    fn a_qmk_keyboard_outranks_an_unknown_usb_serial_device() {
+        let ranked = rank_candidates(vec![usb_port("COM9", 0x1234, 0x0001), peregrine()], None);
+        assert_eq!(ranked, vec!["COM11", "COM9"]);
+    }
+
+    #[test]
+    fn the_last_working_port_is_tried_first() {
+        let ranked = rank_candidates(
+            vec![peregrine(), usb_port("COM9", 0x1234, 0x0001)],
+            Some("COM9"),
+        );
+        assert_eq!(ranked, vec!["COM9", "COM11"]);
+    }
+
+    /// A remembered port that belongs to another protocol must not be revived
+    /// by the preference, or the bug returns through the back door. This is
+    /// reachable in practice: the Peregrine could be unplugged and the Luminex
+    /// take the same COM number.
+    #[test]
+    fn preferring_a_port_does_not_override_the_exclusion() {
+        let ranked = rank_candidates(vec![luminex_serial(), peregrine()], Some("COM3"));
+        assert_eq!(
+            ranked,
+            vec!["COM11"],
+            "an excluded port must stay excluded even when remembered"
+        );
+    }
+
+    #[test]
+    fn ports_of_equal_rank_keep_enumeration_order() {
+        let ranked = rank_candidates(
+            vec![usb_port("COM5", 0x1111, 1), usb_port("COM6", 0x2222, 2)],
+            None,
+        );
+        assert_eq!(ranked, vec!["COM5", "COM6"]);
     }
 
     #[test]

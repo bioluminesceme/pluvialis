@@ -53,6 +53,10 @@ This leaks a handle on every disconnect. In a forever-retry loop that is a slow 
 
 **The bit test is `b & (0x80 >> j)` for `j` in 1..8, and the chart index is `i * 7 + j - 1`.** Seven bits per byte, not eight, because the MSB is the framing marker. The off-by-one here is very easy and produces strokes that are wrong but look reasonable.
 
+**Assert DTR (and RTS) after opening the port.** A USB CDC device commonly treats DTR as "a host is actually listening" and sends nothing without it. The port opens, reports healthy, the app shows connected, and not one byte arrives. This cost real debugging time on 2026-07-20 because the symptom is identical to the user simply not writing. `serialport` does not do this for you: call `write_data_terminal_ready(true)` after `open()`.
+
+**The Luminex offers a serial port too, and it is a trap.** With both machines attached the Peregrine is `VID_FEED&PID_6060` on one COM port, and the Luminex is `VID_112B&PID_000D` presenting "Stenograph Writer Serial Port" on another. That second port is **silent** (verified: zero bytes while writing on the Luminex). An Auto scanner that opens it reports a healthy Gemini PR connection that never delivers a stroke, and the open handle blocks the Stenograph implementation from the same device. `gemini::OTHER_PROTOCOL_VIDS` excludes VID `0x112B` for exactly this reason. **The exclusion must be checked before the remembered-port preference**, or an unplug-replug that reassigns COM numbers revives the bug.
+
 **Do not hold candidate serial ports open.** Auto-detection means opening ports to see whether steno comes out. A port you hold is a port other software cannot use. Open, sniff for a valid packet, and release promptly if it is not a steno device. Remember the VID/PID that worked so later scans go straight to it.
 
 ---

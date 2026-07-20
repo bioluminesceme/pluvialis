@@ -65,10 +65,6 @@ pub struct LiveView {
     /// re-log the whole history every stroke.
     events_logged: usize,
 
-    /// Temporary, removed once M4a gives us a real machine.
-    dev_input: String,
-    dev_error: Option<String>,
-
     loaded: Vec<String>,
     load_error: Option<String>,
 
@@ -88,8 +84,6 @@ impl LiveView {
             layout: None,
             tape: Vec::new(),
             events_logged: 0,
-            dev_input: String::new(),
-            dev_error: None,
             loaded: Vec::new(),
             load_error: None,
             _scanner: None,
@@ -213,27 +207,6 @@ impl LiveView {
         self.events_logged = self.formatted.events.len();
     }
 
-    /// Submit an outline typed into the dev box. Multi stroke outlines such as
-    /// `WEL/KO*PL` are fed one stroke at a time, so retroactive correction is
-    /// visible exactly as it would be from a machine.
-    fn submit_dev_input(&mut self) {
-        let input = self.dev_input.trim().to_owned();
-        if input.is_empty() {
-            return;
-        }
-        match Stroke::parse_outline(&input) {
-            Ok(strokes) => {
-                for stroke in strokes {
-                    self.apply(stroke);
-                }
-                self.dev_error = None;
-                self.dev_input.clear();
-            }
-            // Keep the text so it can be corrected rather than retyped.
-            Err(e) => self.dev_error = Some(format!("{input}: {e}")),
-        }
-    }
-
     fn clear(&mut self) {
         self.translator.clear();
         self.tape.clear();
@@ -257,7 +230,6 @@ impl LiveView {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         // egui 0.35 unified SidePanel and TopBottomPanel into `Panel`.
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::bottom("dev").show(ui, |ui| self.dev_bar(ui));
         egui::Panel::right("tape")
             .resizable(true)
             .default_size(210.0)
@@ -293,7 +265,12 @@ impl LiveView {
 
     fn tape_strip(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
-        ui.strong("Tape");
+        ui.horizontal(|ui| {
+            ui.strong("Tape");
+            if ui.button("Clear").clicked() {
+                self.clear();
+            }
+        });
         ui.separator();
         egui::ScrollArea::vertical()
             .stick_to_bottom(true)
@@ -306,34 +283,6 @@ impl LiveView {
                     });
                 }
             });
-    }
-
-    fn dev_bar(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label("Stroke:");
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut self.dev_input)
-                    .desired_width(240.0)
-                    .hint_text("KAT, or WEL/KO*PL"),
-            );
-            let entered = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if entered {
-                self.submit_dev_input();
-                response.request_focus();
-            }
-            if ui.button("Send").clicked() {
-                self.submit_dev_input();
-            }
-            if ui.button("Clear").clicked() {
-                self.clear();
-            }
-            if let Some(error) = &self.dev_error {
-                let color = raw_color(ui.visuals());
-                ui.colored_label(color, error);
-            }
-        });
-        ui.add_space(4.0);
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {

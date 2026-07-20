@@ -199,7 +199,7 @@ Main window: `TextEdit` with a custom layouter, tape strip on the right (recent 
 **Measured on the real Peregrine, 2026-07-20. These are facts, not assumptions:**
 
 - The Peregrine enumerates as a QMK composite device, **`VID_FEED&PID_6060`**. `VID_FEED` is QMK's default vendor ID. Interface `MI_02` is the CDC serial endpoint and appeared as **COM11** (driver `usbser`). `MI_00` and `MI_01` are the ordinary HID keyboard interfaces and are not ours.
-- **9600 8N1 confirmed.** Opening the port works with and without DTR asserted, so DTR is not required.
+- **9600 8N1 confirmed, and DTR must be asserted.** The port *opens* with or without it, but the device only *sends* with DTR high. An earlier version of this note said DTR was not required, which was wrong: it generalised from the open succeeding rather than from bytes arriving, and the app shipped with a healthy-looking connection that delivered nothing.
 - Two real packets were captured and decoded correctly against `reference/GEMINI-PR-PROTOCOL.md`. Use them as test fixtures:
 
   | Bytes | Chart indices | Machine keys | Stroke | Dictionary |
@@ -214,6 +214,14 @@ The `Machine` trait (connect, stroke stream, status), the keymap layer, the Auto
 **Verify with real hardware, today:** plug in the Peregrine, launch Pluvialis, and write. Strokes appear in the live view, unknown chords come out red, `*` undoes. This is the first end-to-end proof and it needs nothing from Stenograph.
 
 ### M4b. Stenograph USB, with a connect loop that does not give up
+
+**Measured on the real Luminex, 2026-07-20, with it powered on and attached:**
+
+- **The Stenograph driver is already installed.** `Steno Machine` at `USB\VID_112B&PID_000D&MI_00` is bound to service `wdfsgusbV3`, status OK, no error code. The composite device ID is literally `USB\VID_112B&PID_000D\LUMINEX_MACHINE`. **The driver install listed as M8's first task is already done.**
+- **The writer must be switched on to enumerate at all.** With it off, nothing appears; with it on, three device nodes appear. Absence from the device tree therefore does not imply a driver problem.
+- **`MI_01` is a "Stenograph Writer Serial Port" and it is silent.** Two capture attempts at 9600 8N1 with DTR asserted, the second while actively writing on the machine, produced **zero bytes**. So there is no serial shortcut: M4b needs the documented SetupAPI/USB transport. The Luminex may have a menu setting to enable realtime serial output, which was not investigated.
+- That silent port is an active hazard for Auto mode. See `gemini::OTHER_PROTOCOL_VIDS`.
+
 Port the transport to Rust with the `windows` crate: SetupAPI enumeration by the writer GUID, `CreateFile` on the device path, packet pack/unpack, `send_receive`, stroke decoding. Then the state machine the Python version lacks: retry connect once per second forever, open `REALTIME.000`, poll with read requests, and on any I/O error reset state and drop back to retrying. Unplug, replug, power-cycle, and app-started-before-machine all converge to connected without user action.
 **Verify without the machine:** run it, confirm the status shows "Searching for writer", the log shows one attempt per second, CPU stays near idle, and handle count is flat after ten minutes (this specifically proves we did not reproduce Plover's handle leak). Real-machine verification is M8.
 
