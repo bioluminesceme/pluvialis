@@ -47,7 +47,6 @@ Cargo workspace, five crates. The split exists so OS-specific and machine-specif
 | Crate | Responsibility | Platform |
 |---|---|---|
 | `pluvialis-core` | `Stroke`, keymap layer, dictionary load and lookup, translator, formatter, undo history | portable |
-| `pluvialis-script` | Lua dictionary host (`mlua`) | portable |
 | `pluvialis-machine` | `Machine` trait, Auto scanner, and every protocol | serial/HID portable; Stenograph USB and keyboard hook behind `cfg(windows)` |
 | `pluvialis-output` | Keystroke emulation into other apps (Win32 `SendInput`) | Windows now |
 | `pluvialis-app` | egui/eframe GUI, documents, autosave, versioning, config | portable |

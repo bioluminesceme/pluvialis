@@ -111,16 +111,15 @@ impl Dictionary {
 
 /// A dictionary that computes its answers instead of storing them.
 ///
-/// Implemented by the Lua host and by the native jeff-phrasing port. Kept as a
-/// trait here so `pluvialis-core` needs no dependency on either: it defines the
-/// shape and the callers supply the implementations.
+/// Implemented by `pluvialis-python`, which runs Plover's `.py` dictionaries.
+/// Kept as a trait here so `pluvialis-core` needs no dependency on PyO3: it
+/// defines the shape and the callers supply the implementations.
 ///
 /// Outlines arrive already rendered (`["SKP"]`, `["TPHOEU", "TPHOEU"]`) so an
 /// implementation sees exactly what a JSON key would have matched.
 /// Deliberately not `Send`. The dictionary stack lives on the UI thread and is
 /// never moved off it (strokes reach it by channel from the machine thread), and
-/// requiring `Send` here would force the Lua host into mlua's `send` feature for
-/// no benefit.
+/// an embedded Python interpreter is happier not being required to be `Send`.
 pub trait ProgrammaticDictionary {
     /// For the dictionary list.
     fn name(&self) -> String;

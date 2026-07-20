@@ -15,8 +15,7 @@
 //! rewrite per dictionary that can silently drift from the original.
 //!
 //! **This is the same trust model as Plover.** A Python dictionary is arbitrary
-//! code with no sandbox, unlike the Lua host in `pluvialis-script`. Running one
-//! is running whatever its author wrote.
+//! code with no sandbox. Running one is running whatever its author wrote.
 //!
 //! **Embedding ties the executable to a Python installation.** Built against
 //! CPython 3.12 at `C:\Python312` on this machine. If Python is removed or

@@ -194,10 +194,23 @@ fallback, and she wants to keep editing her main dictionary in VS Code. A flat
 `"KAT": "cat"` map is the most editable form available. Converting would break
 Plover compatibility and gain nothing.
 
-### Open question: does the Lua host still have a purpose?
+### The Lua host was cut
 
-It was built before we established that Python runs natively at full speed. Its
-one remaining advantage is that Lua scripts are sandboxed and Python
-dictionaries are not. If the user would never write a Lua dictionary herself, it
-is a feature with no user and should be cut rather than maintained. Raised with
-her, not yet answered.
+**Decided by the user, 2026-07-20:** "If python works and json works, we do not
+need lua."
+
+It was built earlier the same day, before measurement established that Python
+dictionaries run at full speed. Once they did, Lua's only remaining advantage
+was that its scripts are sandboxed and Python's are not, which is not worth a
+whole dictionary format nobody would write in.
+
+`crates/pluvialis-script` and its `mlua` dependency are gone. The crate was moved
+to the Recycle Bin rather than deleted outright, and it is in git history at
+d603c60 if it is ever wanted back. Removing it also drops the vendored Lua C
+build from the toolchain.
+
+The sandbox lesson from it is worth keeping even though the code is not:
+selecting standard libraries was not enough, because the base library still
+carried `dofile` and `loadfile`, and both read files from disk. If a sandboxed
+scripting layer ever returns, test the escape rather than assuming the library
+selection covers it.

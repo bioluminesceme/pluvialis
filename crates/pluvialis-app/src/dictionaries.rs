@@ -117,7 +117,7 @@ impl DictionaryPane {
             changed = true;
         }
 
-        // Dictionaries that compute their answers (Python, Lua). Consulted only
+        // Dictionaries that compute their answers (Python). Consulted only
         // after every JSON one has missed, so they sit below the list rather
         // than in it, and they are off until the user turns them on.
         let programmatic = dictionaries.programmatic().len();
