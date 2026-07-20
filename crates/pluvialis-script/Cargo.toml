@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 log = { workspace = true }
 thiserror = { workspace = true }
+pluvialis-core = { version = "0.1.0", path = "../pluvialis-core" }
 # Vendored so the build needs no system Lua: this has to produce a single exe
 # with no install steps. MSVC provides the C compiler.
 mlua = { version = "0.11", features = ["lua54", "vendored"] }

@@ -291,6 +291,10 @@ impl LiveView {
     /// preventing startup: a program that refuses to open because one of two
     /// dictionaries moved is worse than one that says so and keeps working.
     fn load_dictionaries(&mut self) {
+        // jeff-phrasing is deliberately NOT loaded. The user said on 2026-07-20
+        // that she is not sure she will use it yet, so it must not quietly
+        // change what her outlines do. The port exists and is tested; it is
+        // simply not in the list. Do not add it back without asking.
         for name in crate::cli::DICTIONARIES {
             let path = std::path::Path::new(crate::cli::DICTIONARY_DIR).join(name);
             match Dictionary::load(&path) {

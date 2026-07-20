@@ -2757,6 +2757,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "mlua",
+ "pluvialis-core",
  "thiserror 2.0.19",
 ]
 

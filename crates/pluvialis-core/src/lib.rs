@@ -14,11 +14,14 @@ pub mod document;
 pub mod format;
 pub mod orthography;
 pub mod orthography_rules;
+pub mod phrasing;
+pub mod phrasing_dictionary;
 pub mod stroke;
 pub mod translator;
 
 pub use clean::{CleanError, CleanReport, clean_dictionary};
 pub use dictionary::{Dictionary, DictionaryError, DictionaryStack, ProgrammaticDictionary};
 pub use document::{Document, StenoEdit, steno_edit};
+pub use phrasing_dictionary::PhrasingDictionary;
 pub use stroke::{Stroke, StrokeError};
 pub use translator::{Delta, Translation, Translator};

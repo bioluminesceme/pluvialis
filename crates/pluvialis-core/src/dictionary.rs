@@ -117,7 +117,11 @@ impl Dictionary {
 ///
 /// Outlines arrive already rendered (`["SKP"]`, `["TPHOEU", "TPHOEU"]`) so an
 /// implementation sees exactly what a JSON key would have matched.
-pub trait ProgrammaticDictionary: Send {
+/// Deliberately not `Send`. The dictionary stack lives on the UI thread and is
+/// never moved off it (strokes reach it by channel from the machine thread), and
+/// requiring `Send` here would force the Lua host into mlua's `send` feature for
+/// no benefit.
+pub trait ProgrammaticDictionary {
     /// For the dictionary list.
     fn name(&self) -> String;
 
