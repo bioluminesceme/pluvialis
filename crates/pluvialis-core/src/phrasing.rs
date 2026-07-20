@@ -77,7 +77,7 @@ const THERE_SUFFIXES: [&str; 40] = [
     "", "D", // past tense
     "B", "BT", "BD", "BTD", // be (a)
     "BG", "BGD", // come
-    "G", "GD",   // go
+    "G", "GD", // go
     "PZ", "PDZ", // happen
     "T", "TD", "TS", "TSDZ", // have (to)
     "LZ", "LZD", // live
@@ -369,10 +369,7 @@ fn build_middles() -> HashMap<&'static str, Middle> {
     m.insert(
         "",
         tenses(
-            Middle::Map(vec![
-                (None, modal(" do")),
-                (Some("3ps"), modal(" does")),
-            ]),
+            Middle::Map(vec![(None, modal(" do")), (Some("3ps"), modal(" does"))]),
             modal(" did"),
         ),
     );
@@ -399,167 +396,175 @@ fn build_structure_exceptions() -> HashMap<&'static str, Structure> {
     // Every exception ignores the middle's verb form, so `use_middle_verb_form`
     // is false throughout and each row is just (key, format, verb update).
     let rows: Vec<(&'static str, Data, Option<&'static str>)> = vec![
-    ("", text("!"), None),
+        ("", text("!"), None),
+        // These drop the middle entirely: with no `*` in the format, the modal is
+        // not printed and the auxiliary carries the sentence.
+        (
+            "*E",
+            by_tense(
+                map(vec![
+                    (None, text("! aren't")),
+                    (Some("1ps"), text("! am not")),
+                    (Some("3ps"), text("! isn't")),
+                ]),
+                map(vec![
+                    (None, text("! weren't")),
+                    (Some("1ps"), text("! wasn't")),
+                    (Some("3ps"), text("! wasn't")),
+                ]),
+            ),
+            Some("present-participle"),
+        ),
+        (
+            "E",
+            by_tense(
+                map(vec![
+                    (None, text("! are")),
+                    (Some("1ps"), text("! am")),
+                    (Some("3ps"), text("! is")),
+                ]),
+                map(vec![
+                    (None, text("! were")),
+                    (Some("1ps"), text("! was")),
+                    (Some("3ps"), text("! was")),
+                ]),
+            ),
+            Some("present-participle"),
+        ),
+        (
+            "*F",
+            by_tense(
+                map(vec![
+                    (None, text("! haven't")),
+                    (Some("3ps"), text("! hasn't")),
+                ]),
+                text("! hadn't"),
+            ),
+            Some("past-participle"),
+        ),
+        (
+            "F",
+            by_tense(
+                map(vec![(None, text("! have")), (Some("3ps"), text("! has"))]),
+                text("! had"),
+            ),
+            Some("past-participle"),
+        ),
+        (
+            "*EF",
+            by_tense(
+                map(vec![
+                    (None, text("! haven't been")),
+                    (Some("3ps"), text("! hasn't been")),
+                ]),
+                text("! hadn't been"),
+            ),
+            Some("present-participle"),
+        ),
+        (
+            "EF",
+            by_tense(
+                map(vec![
+                    (None, text("! have been")),
+                    (Some("3ps"), text("! has been")),
+                ]),
+                text("! had been"),
+            ),
+            Some("present-participle"),
+        ),
+        ("EU", text("! still"), None),
+        ("EUF", text("! never"), None),
+        ("UF", text("! just"), None),
+        // Infinitives. These are keyed by the whole left bank plus vowels, so they
+        // only fire for the two blank subjects.
+        ("STWRU", text("to"), Some("root")),
+        ("STWR*U", text("not to"), Some("root")),
+        ("STKPWHRU", text("to"), Some("root")),
+        ("STKPWHR*U", text("not to"), Some("root")),
+    ];
 
-    // These drop the middle entirely: with no `*` in the format, the modal is
-    // not printed and the auxiliary carries the sentence.
-    (
-        "*E",
-        by_tense(
-            map(vec![
-                (None, text("! aren't")),
-                (Some("1ps"), text("! am not")),
-                (Some("3ps"), text("! isn't")),
-            ]),
-            map(vec![
-                (None, text("! weren't")),
-                (Some("1ps"), text("! wasn't")),
-                (Some("3ps"), text("! wasn't")),
-            ]),
-        ),
-        false,
-        Some("present-participle"),
-    );
-    add(
-        "E",
-        by_tense(
-            map(vec![
-                (None, text("! are")),
-                (Some("1ps"), text("! am")),
-                (Some("3ps"), text("! is")),
-            ]),
-            map(vec![
-                (None, text("! were")),
-                (Some("1ps"), text("! was")),
-                (Some("3ps"), text("! was")),
-            ]),
-        ),
-        false,
-        Some("present-participle"),
-    );
-    add(
-        "*F",
-        by_tense(
-            map(vec![
-                (None, text("! haven't")),
-                (Some("3ps"), text("! hasn't")),
-            ]),
-            text("! hadn't"),
-        ),
-        false,
-        Some("past-participle"),
-    );
-    add(
-        "F",
-        by_tense(
-            map(vec![(None, text("! have")), (Some("3ps"), text("! has"))]),
-            text("! had"),
-        ),
-        false,
-        Some("past-participle"),
-    );
-    add(
-        "*EF",
-        by_tense(
-            map(vec![
-                (None, text("! haven't been")),
-                (Some("3ps"), text("! hasn't been")),
-            ]),
-            text("! hadn't been"),
-        ),
-        false,
-        Some("present-participle"),
-    );
-    add(
-        "EF",
-        by_tense(
-            map(vec![
-                (None, text("! have been")),
-                (Some("3ps"), text("! has been")),
-            ]),
-            text("! had been"),
-        ),
-        false,
-        Some("present-participle"),
-    );
-
-    add("EU", text("! still"), false, None);
-    add("EUF", text("! never"), false, None);
-    add("UF", text("! just"), false, None);
-
-    // Infinitives. These are keyed by the whole left bank plus vowels, so they
-    // only fire for the two blank subjects.
-    add("STWRU", text("to"), false, Some("root"));
-    add("STWR*U", text("not to"), false, Some("root"));
-    add("STKPWHRU", text("to"), false, Some("root"));
-    add("STKPWHR*U", text("not to"), false, Some("root"));
-    drop(add);
-    m
+    rows.into_iter()
+        .map(|(key, format, verb_update)| {
+            (
+                key,
+                Structure {
+                    format,
+                    use_middle_verb_form: false,
+                    verb_update,
+                },
+            )
+        })
+        .collect()
 }
 
 fn build_structures() -> HashMap<&'static str, Structure> {
-    let mut m = HashMap::new();
-    let mut add = |key: &'static str, format: Data, verb_update: Option<&'static str>| {
-        m.insert(
-            key,
-            Structure {
-                format,
-                use_middle_verb_form: true,
-                verb_update,
-            },
-        );
-    };
-
     // "always" replaces the subject slot when there is no subject to print.
     let always = || {
-        map(vec![
-            (None, text("* !")),
-            (Some("b3ps-root"), text("* always")),
-            (Some("b3pp-root"), text("* always")),
-        ])
+        by_tense(
+            map(vec![
+                (None, text("* !")),
+                (Some("b3ps-root"), text("* always")),
+                (Some("b3pp-root"), text("* always")),
+            ]),
+            map(vec![
+                (None, text("* !")),
+                (Some("b3ps-root"), text("* always")),
+                (Some("b3pp-root"), text("* always")),
+            ]),
+        )
+    };
+    let to_be = || {
+        by_tense(
+            affix(&TO_BE_PRESENT, "!*", ""),
+            affix(&TO_BE_PAST, "!*", ""),
+        )
+    };
+    let to_have_been = || {
+        by_tense(
+            affix(&TO_HAVE_PRESENT, "!*", " been"),
+            affix(&TO_HAVE_PAST, "!*", " been"),
+        )
+    };
+    let to_have = || {
+        by_tense(
+            affix(&TO_HAVE_PRESENT, "!*", ""),
+            affix(&TO_HAVE_PAST, "!*", ""),
+        )
     };
 
-    add("", text("!*"), None);
-    add("*", text("!*"), None);
+    // The star is only meaningful in some of these shapes, so several pairs
+    // deliberately map to the same structure.
+    let rows: Vec<(&'static str, Data, Option<&'static str>)> = vec![
+        ("", text("!*"), None),
+        ("*", text("!*"), None),
+        ("*E", to_be(), Some("present-participle")),
+        ("E", to_be(), Some("present-participle")),
+        ("*EF", to_have_been(), Some("present-participle")),
+        ("EF", to_have_been(), Some("present-participle")),
+        ("*F", to_have(), Some("past-participle")),
+        ("F", to_have(), Some("past-participle")),
+        ("*EU", text("! still*"), None),
+        ("EU", text("!* still"), None),
+        ("*EUF", text("!* even"), None),
+        ("EUF", text("!* never"), None),
+        ("*U", always(), None),
+        ("U", always(), None),
+        ("*UF", text("! just*"), None),
+        ("UF", text("!* just"), None),
+    ];
 
-    for key in ["*E", "E"] {
-        add(
-            key,
-            by_tense(affix(&TO_BE_PRESENT, "!*", ""), affix(&TO_BE_PAST, "!*", "")),
-            Some("present-participle"),
-        );
-    }
-    for key in ["*EF", "EF"] {
-        add(
-            key,
-            by_tense(
-                affix(&TO_HAVE_PRESENT, "!*", " been"),
-                affix(&TO_HAVE_PAST, "!*", " been"),
-            ),
-            Some("present-participle"),
-        );
-    }
-    for key in ["*F", "F"] {
-        add(
-            key,
-            by_tense(
-                affix(&TO_HAVE_PRESENT, "!*", ""),
-                affix(&TO_HAVE_PAST, "!*", ""),
-            ),
-            Some("past-participle"),
-        );
-    }
-
-    add("*EU", text("! still*"), None);
-    add("EU", text("!* still"), None);
-    add("*EUF", text("!* even"), None);
-    add("EUF", text("!* never"), None);
-    add("*U", by_tense(always(), always()), None);
-    add("U", by_tense(always(), always()), None);
-    add("*UF", text("! just*"), None);
-    add("UF", text("!* just"), None);
-    drop(add);
-    m
+    rows.into_iter()
+        .map(|(key, format, verb_update)| {
+            (
+                key,
+                Structure {
+                    format,
+                    use_middle_verb_form: true,
+                    verb_update,
+                },
+            )
+        })
+        .collect()
 }
 
 fn build_enders() -> HashMap<&'static str, Ender> {
@@ -571,127 +576,483 @@ fn build_enders() -> HashMap<&'static str, Ender> {
     add("", "present", text(""));
     add("D", "past", text(""));
 
-    add("RB", "present", present_verb(" ask", " asks", " asking", " asked"));
-    add("RBD", "past", past_verb(" asked", " ask", " asking", " asked"));
+    add(
+        "RB",
+        "present",
+        present_verb(" ask", " asks", " asking", " asked"),
+    );
+    add(
+        "RBD",
+        "past",
+        past_verb(" asked", " ask", " asking", " asked"),
+    );
 
     add("B", "present", affix(&TO_BE_PRESENT, "", ""));
     add("BT", "present", affix(&TO_BE_PRESENT, "", " a"));
     add("BD", "past", affix(&TO_BE_PAST, "", ""));
     add("BTD", "past", affix(&TO_BE_PAST, "", " a"));
 
-    add("RPBG", "present", present_verb(" become", " becomes", " becoming", " become"));
-    add("RPBGT", "present", present_verb(" become a", " becomes a", " becoming a", " become a"));
-    add("RPBGD", "past", past_verb(" became", " become", " becoming", " become"));
-    add("RPBGTD", "past", past_verb(" became a", " become a", " becoming a", " become a"));
+    add(
+        "RPBG",
+        "present",
+        present_verb(" become", " becomes", " becoming", " become"),
+    );
+    add(
+        "RPBGT",
+        "present",
+        present_verb(" become a", " becomes a", " becoming a", " become a"),
+    );
+    add(
+        "RPBGD",
+        "past",
+        past_verb(" became", " become", " becoming", " become"),
+    );
+    add(
+        "RPBGTD",
+        "past",
+        past_verb(" became a", " become a", " becoming a", " become a"),
+    );
 
-    add("BL", "present", present_verb(" believe", " believes", " believing", " believed"));
-    add("BLT", "present", present_verb(" believe that", " believes that", " believing that", " believed that"));
-    add("BLD", "past", past_verb(" believed", " believe", " believing", " believed"));
-    add("BLTD", "past", past_verb(" believed that", " believe that", " believing that", " believed that"));
+    add(
+        "BL",
+        "present",
+        present_verb(" believe", " believes", " believing", " believed"),
+    );
+    add(
+        "BLT",
+        "present",
+        present_verb(
+            " believe that",
+            " believes that",
+            " believing that",
+            " believed that",
+        ),
+    );
+    add(
+        "BLD",
+        "past",
+        past_verb(" believed", " believe", " believing", " believed"),
+    );
+    add(
+        "BLTD",
+        "past",
+        past_verb(
+            " believed that",
+            " believe that",
+            " believing that",
+            " believed that",
+        ),
+    );
 
-    add("RBLG", "present", present_verb(" call", " calls", " calling", " called"));
-    add("RBLGD", "past", past_verb(" called", " call", " calling", " called"));
+    add(
+        "RBLG",
+        "present",
+        present_verb(" call", " calls", " calling", " called"),
+    );
+    add(
+        "RBLGD",
+        "past",
+        past_verb(" called", " call", " calling", " called"),
+    );
 
     // Auxiliaries are bare strings: they take no inflection and so do not
     // combine with the middle or the structures.
     add("BGS", "present", text(" can"));
     add("BGSZ", "past", text(" could"));
 
-    add("RZ", "present", present_verb(" care", " cares", " caring", " cared"));
-    add("RDZ", "past", past_verb(" cared", " care", " caring", " cared"));
+    add(
+        "RZ",
+        "present",
+        present_verb(" care", " cares", " caring", " cared"),
+    );
+    add(
+        "RDZ",
+        "past",
+        past_verb(" cared", " care", " caring", " cared"),
+    );
 
-    add("PBGZ", "present", present_verb(" change", " changes", " changing", " changed"));
-    add("PBGDZ", "past", past_verb(" changed", " change", " changing", " changed"));
+    add(
+        "PBGZ",
+        "present",
+        present_verb(" change", " changes", " changing", " changed"),
+    );
+    add(
+        "PBGDZ",
+        "past",
+        past_verb(" changed", " change", " changing", " changed"),
+    );
 
-    add("BG", "present", present_verb(" come", " comes", " coming", " come"));
-    add("BGT", "present", present_verb(" come to", " comes to", " coming to", " come to"));
-    add("BGD", "past", past_verb(" came", " come", " coming", " come"));
-    add("BGTD", "past", past_verb(" came to", " come to", " coming to", " come to"));
+    add(
+        "BG",
+        "present",
+        present_verb(" come", " comes", " coming", " come"),
+    );
+    add(
+        "BGT",
+        "present",
+        present_verb(" come to", " comes to", " coming to", " come to"),
+    );
+    add(
+        "BGD",
+        "past",
+        past_verb(" came", " come", " coming", " come"),
+    );
+    add(
+        "BGTD",
+        "past",
+        past_verb(" came to", " come to", " coming to", " come to"),
+    );
 
-    add("RBGZ", "present", present_verb(" consider", " considers", " considering", " considered"));
-    add("RBGDZ", "past", past_verb(" considered", " consider", " considering", " considered"));
+    add(
+        "RBGZ",
+        "present",
+        present_verb(" consider", " considers", " considering", " considered"),
+    );
+    add(
+        "RBGDZ",
+        "past",
+        past_verb(" considered", " consider", " considering", " considered"),
+    );
 
-    add("RP", "present", present_verb(" do", " does", " doing", " done"));
-    add("RPT", "present", present_verb(" do it", " does it", " doing it", " done it"));
+    add(
+        "RP",
+        "present",
+        present_verb(" do", " does", " doing", " done"),
+    );
+    add(
+        "RPT",
+        "present",
+        present_verb(" do it", " does it", " doing it", " done it"),
+    );
     add("RPD", "past", past_verb(" did", " do", " doing", " done"));
-    add("RPTD", "past", past_verb(" did it", " do it", " doing it", " done it"));
+    add(
+        "RPTD",
+        "past",
+        past_verb(" did it", " do it", " doing it", " done it"),
+    );
 
-    add("PGS", "present", present_verb(" expect", " expects", " expecting", " expected"));
-    add("PGTS", "present", present_verb(" expect that", " expects that", " expecting that", " expected that"));
-    add("PGSZ", "past", past_verb(" expected", " expect", " expecting", " expected"));
-    add("PGTSDZ", "past", past_verb(" expected that", " expect that", " expecting that", " expected that"));
+    add(
+        "PGS",
+        "present",
+        present_verb(" expect", " expects", " expecting", " expected"),
+    );
+    add(
+        "PGTS",
+        "present",
+        present_verb(
+            " expect that",
+            " expects that",
+            " expecting that",
+            " expected that",
+        ),
+    );
+    add(
+        "PGSZ",
+        "past",
+        past_verb(" expected", " expect", " expecting", " expected"),
+    );
+    add(
+        "PGTSDZ",
+        "past",
+        past_verb(
+            " expected that",
+            " expect that",
+            " expecting that",
+            " expected that",
+        ),
+    );
 
-    add("LT", "present", present_verb(" feel", " feels", " feeling", " felt"));
-    add("LTS", "present", present_verb(" feel like", " feels like", " feeling like", " felt like"));
-    add("LTD", "past", past_verb(" felt", " feel", " feeling", " felt"));
-    add("LTSDZ", "past", past_verb(" felt like", " feel like", " feeling like", " felt like"));
+    add(
+        "LT",
+        "present",
+        present_verb(" feel", " feels", " feeling", " felt"),
+    );
+    add(
+        "LTS",
+        "present",
+        present_verb(" feel like", " feels like", " feeling like", " felt like"),
+    );
+    add(
+        "LTD",
+        "past",
+        past_verb(" felt", " feel", " feeling", " felt"),
+    );
+    add(
+        "LTSDZ",
+        "past",
+        past_verb(" felt like", " feel like", " feeling like", " felt like"),
+    );
 
-    add("PBLG", "present", present_verb(" find", " finds", " finding", " found"));
-    add("PBLGT", "present", present_verb(" find that", " finds that", " finding that", " found that"));
-    add("PBLGD", "past", past_verb(" found", " find", " finding", " found"));
-    add("PBLGTD", "past", past_verb(" found that", " find that", " finding that", " found that"));
+    add(
+        "PBLG",
+        "present",
+        present_verb(" find", " finds", " finding", " found"),
+    );
+    add(
+        "PBLGT",
+        "present",
+        present_verb(" find that", " finds that", " finding that", " found that"),
+    );
+    add(
+        "PBLGD",
+        "past",
+        past_verb(" found", " find", " finding", " found"),
+    );
+    add(
+        "PBLGTD",
+        "past",
+        past_verb(" found that", " find that", " finding that", " found that"),
+    );
 
-    add("RG", "present", present_verb(" forget", " forgets", " forgetting", " forgotten"));
-    add("RGT", "present", present_verb(" forget to", " forgets to", " forgetting to", " forgotten to"));
-    add("RGD", "past", past_verb(" forgot", " forget", " forgetting", " forgotten"));
-    add("RGTD", "past", past_verb(" forgot to", " forget to", " forgetting to", " forgotten to"));
+    add(
+        "RG",
+        "present",
+        present_verb(" forget", " forgets", " forgetting", " forgotten"),
+    );
+    add(
+        "RGT",
+        "present",
+        present_verb(
+            " forget to",
+            " forgets to",
+            " forgetting to",
+            " forgotten to",
+        ),
+    );
+    add(
+        "RGD",
+        "past",
+        past_verb(" forgot", " forget", " forgetting", " forgotten"),
+    );
+    add(
+        "RGTD",
+        "past",
+        past_verb(
+            " forgot to",
+            " forget to",
+            " forgetting to",
+            " forgotten to",
+        ),
+    );
 
-    add("GS", "present", present_verb(" get", " gets", " getting", " got"));
-    add("GTS", "present", present_verb(" get to", " gets to", " getting to", " got to"));
+    add(
+        "GS",
+        "present",
+        present_verb(" get", " gets", " getting", " got"),
+    );
+    add(
+        "GTS",
+        "present",
+        present_verb(" get to", " gets to", " getting to", " got to"),
+    );
     add("GSZ", "past", past_verb(" got", " get", " getting", " got"));
-    add("GTSDZ", "past", past_verb(" got to", " get to", " getting to", " got to"));
+    add(
+        "GTSDZ",
+        "past",
+        past_verb(" got to", " get to", " getting to", " got to"),
+    );
 
-    add("GZ", "present", present_verb(" give", " gives", " giving", " given"));
-    add("GDZ", "past", past_verb(" gave", " give", " giving", " given"));
+    add(
+        "GZ",
+        "present",
+        present_verb(" give", " gives", " giving", " given"),
+    );
+    add(
+        "GDZ",
+        "past",
+        past_verb(" gave", " give", " giving", " given"),
+    );
 
-    add("G", "present", present_verb(" go", " goes", " going", " gone"));
-    add("GT", "present", present_verb(" go to", " goes to", " going to", " gone to"));
+    add(
+        "G",
+        "present",
+        present_verb(" go", " goes", " going", " gone"),
+    );
+    add(
+        "GT",
+        "present",
+        present_verb(" go to", " goes to", " going to", " gone to"),
+    );
     add("GD", "past", past_verb(" went", " go", " going", " gone"));
-    add("GTD", "past", past_verb(" went to", " go to", " going to", " gone to"));
+    add(
+        "GTD",
+        "past",
+        past_verb(" went to", " go to", " going to", " gone to"),
+    );
 
-    add("T", "present", present_verb(" have", " has", " having", " had"));
-    add("TS", "present", present_verb(" have to", " has to", " having to", " had to"));
+    add(
+        "T",
+        "present",
+        present_verb(" have", " has", " having", " had"),
+    );
+    add(
+        "TS",
+        "present",
+        present_verb(" have to", " has to", " having to", " had to"),
+    );
     add("TD", "past", past_verb(" had", " have", " having", " had"));
-    add("TSDZ", "past", past_verb(" had to", " have to", " having to", " had to"));
+    add(
+        "TSDZ",
+        "past",
+        past_verb(" had to", " have to", " having to", " had to"),
+    );
 
-    add("PZ", "present", present_verb(" happen", " happens", " happening", " happened"));
-    add("PDZ", "past", past_verb(" happened", " happen", " happening", " happened"));
+    add(
+        "PZ",
+        "present",
+        present_verb(" happen", " happens", " happening", " happened"),
+    );
+    add(
+        "PDZ",
+        "past",
+        past_verb(" happened", " happen", " happening", " happened"),
+    );
 
-    add("PG", "present", present_verb(" hear", " hears", " hearing", " heard"));
-    add("PGT", "present", present_verb(" hear that", " hears that", " hearing that", " heard that"));
-    add("PGD", "past", past_verb(" heard", " hear", " hearing", " heard"));
-    add("PGTD", "past", past_verb(" heard that", " hear that", " hearing that", " heard that"));
+    add(
+        "PG",
+        "present",
+        present_verb(" hear", " hears", " hearing", " heard"),
+    );
+    add(
+        "PGT",
+        "present",
+        present_verb(" hear that", " hears that", " hearing that", " heard that"),
+    );
+    add(
+        "PGD",
+        "past",
+        past_verb(" heard", " hear", " hearing", " heard"),
+    );
+    add(
+        "PGTD",
+        "past",
+        past_verb(" heard that", " hear that", " hearing that", " heard that"),
+    );
 
-    add("RPS", "present", present_verb(" hope", " hopes", " hoping", " hoped"));
-    add("RPTS", "present", present_verb(" hope to", " hopes to", " hoping to", " hoped to"));
-    add("RPSZ", "past", past_verb(" hoped", " hope", " hoping", " hoped"));
-    add("RPTSDZ", "past", past_verb(" hoped to", " hope to", " hoping to", " hoped to"));
+    add(
+        "RPS",
+        "present",
+        present_verb(" hope", " hopes", " hoping", " hoped"),
+    );
+    add(
+        "RPTS",
+        "present",
+        present_verb(" hope to", " hopes to", " hoping to", " hoped to"),
+    );
+    add(
+        "RPSZ",
+        "past",
+        past_verb(" hoped", " hope", " hoping", " hoped"),
+    );
+    add(
+        "RPTSDZ",
+        "past",
+        past_verb(" hoped to", " hope to", " hoping to", " hoped to"),
+    );
 
-    add("PLG", "present", present_verb(" imagine", " imagines", " imagining", " imagined"));
-    add("PLGT", "present", present_verb(" imagine that", " imagines that", " imagining that", " imagined that"));
-    add("PLGD", "past", past_verb(" imagined", " imagine", " imagining", " imagined"));
-    add("PLGTD", "past", past_verb(" imagined that", " imagine that", " imagining that", " imagined that"));
+    add(
+        "PLG",
+        "present",
+        present_verb(" imagine", " imagines", " imagining", " imagined"),
+    );
+    add(
+        "PLGT",
+        "present",
+        present_verb(
+            " imagine that",
+            " imagines that",
+            " imagining that",
+            " imagined that",
+        ),
+    );
+    add(
+        "PLGD",
+        "past",
+        past_verb(" imagined", " imagine", " imagining", " imagined"),
+    );
+    add(
+        "PLGTD",
+        "past",
+        past_verb(
+            " imagined that",
+            " imagine that",
+            " imagining that",
+            " imagined that",
+        ),
+    );
 
     add("PBLGSZ", "present", text(" just"));
     add("PBLGTSDZ", "past", text(" just"));
 
-    add("PBGS", "present", present_verb(" keep", " keeps", " keeping", " kept"));
-    add("PBGSZ", "past", past_verb(" kept", " keep", " keeping", " kept"));
+    add(
+        "PBGS",
+        "present",
+        present_verb(" keep", " keeps", " keeping", " kept"),
+    );
+    add(
+        "PBGSZ",
+        "past",
+        past_verb(" kept", " keep", " keeping", " kept"),
+    );
 
-    add("PB", "present", present_verb(" know", " knows", " knowing", " known"));
-    add("PBT", "present", present_verb(" know that", " knows that", " knowing that", " known that"));
-    add("PBD", "past", past_verb(" knew", " know", " knowing", " known"));
-    add("PBTD", "past", past_verb(" knew that", " know that", " knowing that", " known that"));
+    add(
+        "PB",
+        "present",
+        present_verb(" know", " knows", " knowing", " known"),
+    );
+    add(
+        "PBT",
+        "present",
+        present_verb(" know that", " knows that", " knowing that", " known that"),
+    );
+    add(
+        "PBD",
+        "past",
+        past_verb(" knew", " know", " knowing", " known"),
+    );
+    add(
+        "PBTD",
+        "past",
+        past_verb(" knew that", " know that", " knowing that", " known that"),
+    );
 
-    add("RPBS", "present", present_verb(" learn", " learns", " learning", " learned"));
-    add("RPBTS", "present", present_verb(" learn to", " learns to", " learning to", " learned to"));
-    add("RPBSZ", "past", past_verb(" learned", " learn", " learning", " learned"));
-    add("RPBTSDZ", "past", past_verb(" learned to", " learn to", " learning to", " learned to"));
+    add(
+        "RPBS",
+        "present",
+        present_verb(" learn", " learns", " learning", " learned"),
+    );
+    add(
+        "RPBTS",
+        "present",
+        present_verb(" learn to", " learns to", " learning to", " learned to"),
+    );
+    add(
+        "RPBSZ",
+        "past",
+        past_verb(" learned", " learn", " learning", " learned"),
+    );
+    add(
+        "RPBTSDZ",
+        "past",
+        past_verb(" learned to", " learn to", " learning to", " learned to"),
+    );
 
-    add("LGZ", "present", present_verb(" leave", " leaves", " leaving", " left"));
-    add("LGDZ", "past", past_verb(" left", " leave", " leaving", " left"));
+    add(
+        "LGZ",
+        "present",
+        present_verb(" leave", " leaves", " leaving", " left"),
+    );
+    add(
+        "LGDZ",
+        "past",
+        past_verb(" left", " leave", " leaving", " left"),
+    );
 
-    add("LS", "present", present_verb(" let", " lets", " letting", " let"));
+    add(
+        "LS",
+        "present",
+        present_verb(" let", " lets", " letting", " let"),
+    );
     // "let" has no root entry, unlike every other past ender, so "I could let"
     // falls through to the default " let" rather than a root form.
     add(
@@ -704,147 +1065,548 @@ fn build_enders() -> HashMap<&'static str, Ender> {
         ]),
     );
 
-    add("BLG", "present", present_verb(" like", " likes", " liking", " liked"));
-    add("BLGT", "present", present_verb(" like to", " likes to", " liking to", " liked to"));
-    add("BLGD", "past", past_verb(" liked", " like", " liking", " liked"));
-    add("BLGTD", "past", past_verb(" liked to", " like to", " liking to", " liked to"));
+    add(
+        "BLG",
+        "present",
+        present_verb(" like", " likes", " liking", " liked"),
+    );
+    add(
+        "BLGT",
+        "present",
+        present_verb(" like to", " likes to", " liking to", " liked to"),
+    );
+    add(
+        "BLGD",
+        "past",
+        past_verb(" liked", " like", " liking", " liked"),
+    );
+    add(
+        "BLGTD",
+        "past",
+        past_verb(" liked to", " like to", " liking to", " liked to"),
+    );
 
-    add("LZ", "present", present_verb(" live", " lives", " living", " lived"));
-    add("LDZ", "past", past_verb(" lived", " live", " living", " lived"));
+    add(
+        "LZ",
+        "present",
+        present_verb(" live", " lives", " living", " lived"),
+    );
+    add(
+        "LDZ",
+        "past",
+        past_verb(" lived", " live", " living", " lived"),
+    );
 
-    add("L", "present", present_verb(" look", " looks", " looking", " looked"));
-    add("LD", "past", past_verb(" looked", " look", " looking", " looked"));
+    add(
+        "L",
+        "present",
+        present_verb(" look", " looks", " looking", " looked"),
+    );
+    add(
+        "LD",
+        "past",
+        past_verb(" looked", " look", " looking", " looked"),
+    );
 
-    add("LG", "present", present_verb(" love", " loves", " loving", " loved"));
-    add("LGT", "present", present_verb(" love to", " loves to", " loving to", " loved to"));
-    add("LGD", "past", past_verb(" loved", " love", " loving", " loved"));
-    add("LGTD", "past", past_verb(" loved to", " love to", " loving to", " loved to"));
+    add(
+        "LG",
+        "present",
+        present_verb(" love", " loves", " loving", " loved"),
+    );
+    add(
+        "LGT",
+        "present",
+        present_verb(" love to", " loves to", " loving to", " loved to"),
+    );
+    add(
+        "LGD",
+        "past",
+        past_verb(" loved", " love", " loving", " loved"),
+    );
+    add(
+        "LGTD",
+        "past",
+        past_verb(" loved to", " love to", " loving to", " loved to"),
+    );
 
-    add("RPBL", "present", present_verb(" make", " makes", " making", " made"));
-    add("RPBLT", "present", present_verb(" make a", " makes a", " making a", " made a"));
-    add("RPBLD", "past", past_verb(" made", " make", " making", " made"));
-    add("RPBLTD", "past", past_verb(" made a", " make a", " making a", " made a"));
+    add(
+        "RPBL",
+        "present",
+        present_verb(" make", " makes", " making", " made"),
+    );
+    add(
+        "RPBLT",
+        "present",
+        present_verb(" make a", " makes a", " making a", " made a"),
+    );
+    add(
+        "RPBLD",
+        "past",
+        past_verb(" made", " make", " making", " made"),
+    );
+    add(
+        "RPBLTD",
+        "past",
+        past_verb(" made a", " make a", " making a", " made a"),
+    );
 
     add("PL", "present", text(" may"));
     add("PLT", "present", text(" may be"));
     add("PLD", "past", text(" might"));
     add("PLTD", "past", text(" might be"));
 
-    add("PBL", "present", present_verb(" mean", " means", " meaning", " meant"));
-    add("PBLT", "present", present_verb(" mean to", " means to", " meaning to", " meant to"));
-    add("PBLD", "past", past_verb(" meant", " mean", " meaning", " meant"));
-    add("PBLTD", "past", past_verb(" meant to", " mean to", " meaning to", " meant to"));
+    add(
+        "PBL",
+        "present",
+        present_verb(" mean", " means", " meaning", " meant"),
+    );
+    add(
+        "PBLT",
+        "present",
+        present_verb(" mean to", " means to", " meaning to", " meant to"),
+    );
+    add(
+        "PBLD",
+        "past",
+        past_verb(" meant", " mean", " meaning", " meant"),
+    );
+    add(
+        "PBLTD",
+        "past",
+        past_verb(" meant to", " mean to", " meaning to", " meant to"),
+    );
 
-    add("PBLS", "present", present_verb(" mind", " minds", " minding", " minded"));
-    add("PBLSZ", "past", past_verb(" minded", " mind", " minding", " minded"));
+    add(
+        "PBLS",
+        "present",
+        present_verb(" mind", " minds", " minding", " minded"),
+    );
+    add(
+        "PBLSZ",
+        "past",
+        past_verb(" minded", " mind", " minding", " minded"),
+    );
 
-    add("PLZ", "present", present_verb(" move", " moves", " moving", " moved"));
-    add("PLDZ", "past", past_verb(" moved", " move", " moving", " moved"));
+    add(
+        "PLZ",
+        "present",
+        present_verb(" move", " moves", " moving", " moved"),
+    );
+    add(
+        "PLDZ",
+        "past",
+        past_verb(" moved", " move", " moving", " moved"),
+    );
 
     add("PBLGS", "present", text(" must"));
     add("PBLGTS", "present", text(" must be"));
 
-    add("RPG", "present", present_verb(" need", " needs", " needing", " needed"));
-    add("RPGT", "present", present_verb(" need to", " needs to", " needing to", " needed to"));
-    add("RPGD", "past", past_verb(" needed", " need", " needing", " needed"));
-    add("RPGTD", "past", past_verb(" needed to", " need to", " needing to", " needed to"));
+    add(
+        "RPG",
+        "present",
+        present_verb(" need", " needs", " needing", " needed"),
+    );
+    add(
+        "RPGT",
+        "present",
+        present_verb(" need to", " needs to", " needing to", " needed to"),
+    );
+    add(
+        "RPGD",
+        "past",
+        past_verb(" needed", " need", " needing", " needed"),
+    );
+    add(
+        "RPGTD",
+        "past",
+        past_verb(" needed to", " need to", " needing to", " needed to"),
+    );
 
-    add("PS", "present", present_verb(" put", " puts", " putting", " put"));
-    add("PTS", "present", present_verb(" put it", " puts it", " putting it", " put it"));
+    add(
+        "PS",
+        "present",
+        present_verb(" put", " puts", " putting", " put"),
+    );
+    add(
+        "PTS",
+        "present",
+        present_verb(" put it", " puts it", " putting it", " put it"),
+    );
     add("PSZ", "past", past_verb(" put", " put", " putting", " put"));
-    add("PTSDZ", "past", past_verb(" put it", " put it", " putting it", " put it"));
+    add(
+        "PTSDZ",
+        "past",
+        past_verb(" put it", " put it", " putting it", " put it"),
+    );
 
-    add("RS", "present", present_verb(" read", " reads", " reading", " read"));
-    add("RSZ", "past", past_verb(" read", " read", " reading", " read"));
+    add(
+        "RS",
+        "present",
+        present_verb(" read", " reads", " reading", " read"),
+    );
+    add(
+        "RSZ",
+        "past",
+        past_verb(" read", " read", " reading", " read"),
+    );
 
     add("RLG", "present", text(" really"));
     add("RLGD", "past", text(" really"));
 
-    add("RL", "present", present_verb(" recall", " recalls", " recalling", " recalled"));
-    add("RLD", "past", past_verb(" recalled", " recall", " recalling", " recalled"));
+    add(
+        "RL",
+        "present",
+        present_verb(" recall", " recalls", " recalling", " recalled"),
+    );
+    add(
+        "RLD",
+        "past",
+        past_verb(" recalled", " recall", " recalling", " recalled"),
+    );
 
-    add("RLS", "present", present_verb(" realize", " realizes", " realizing", " realized"));
-    add("RLTS", "present", present_verb(" realize that", " realizes that", " realizing that", " realized that"));
-    add("RLSZ", "past", past_verb(" realized", " realize", " realizing", " realized"));
-    add("RLTSDZ", "past", past_verb(" realized that", " realize that", " realizing that", " realized that"));
+    add(
+        "RLS",
+        "present",
+        present_verb(" realize", " realizes", " realizing", " realized"),
+    );
+    add(
+        "RLTS",
+        "present",
+        present_verb(
+            " realize that",
+            " realizes that",
+            " realizing that",
+            " realized that",
+        ),
+    );
+    add(
+        "RLSZ",
+        "past",
+        past_verb(" realized", " realize", " realizing", " realized"),
+    );
+    add(
+        "RLTSDZ",
+        "past",
+        past_verb(
+            " realized that",
+            " realize that",
+            " realizing that",
+            " realized that",
+        ),
+    );
 
-    add("RPL", "present", present_verb(" remember", " remembers", " remembering", " remembered"));
-    add("RPLT", "present", present_verb(" remember that", " remembers that", " remembering that", " remembered that"));
-    add("RPLD", "past", past_verb(" remembered", " remember", " remembering", " remembered"));
-    add("RPLTD", "past", past_verb(" remembered that", " remember that", " remembering that", " remembered that"));
+    add(
+        "RPL",
+        "present",
+        present_verb(" remember", " remembers", " remembering", " remembered"),
+    );
+    add(
+        "RPLT",
+        "present",
+        present_verb(
+            " remember that",
+            " remembers that",
+            " remembering that",
+            " remembered that",
+        ),
+    );
+    add(
+        "RPLD",
+        "past",
+        past_verb(" remembered", " remember", " remembering", " remembered"),
+    );
+    add(
+        "RPLTD",
+        "past",
+        past_verb(
+            " remembered that",
+            " remember that",
+            " remembering that",
+            " remembered that",
+        ),
+    );
 
-    add("RPLS", "present", present_verb(" remain", " remains", " remaining", " remained"));
-    add("RPLSZ", "past", past_verb(" remained", " remain", " remaining", " remained"));
+    add(
+        "RPLS",
+        "present",
+        present_verb(" remain", " remains", " remaining", " remained"),
+    );
+    add(
+        "RPLSZ",
+        "past",
+        past_verb(" remained", " remain", " remaining", " remained"),
+    );
 
-    add("R", "present", present_verb(" run", " runs", " running", " run"));
+    add(
+        "R",
+        "present",
+        present_verb(" run", " runs", " running", " run"),
+    );
     add("RD", "past", past_verb(" ran", " run", " running", " run"));
 
-    add("BS", "present", present_verb(" say", " says", " saying", " said"));
-    add("BTS", "present", present_verb(" say that", " says that", " saying that", " said that"));
-    add("BSZ", "past", past_verb(" said", " say", " saying", " said"));
-    add("BTSDZ", "past", past_verb(" said that", " say that", " saying that", " said that"));
+    add(
+        "BS",
+        "present",
+        present_verb(" say", " says", " saying", " said"),
+    );
+    add(
+        "BTS",
+        "present",
+        present_verb(" say that", " says that", " saying that", " said that"),
+    );
+    add(
+        "BSZ",
+        "past",
+        past_verb(" said", " say", " saying", " said"),
+    );
+    add(
+        "BTSDZ",
+        "past",
+        past_verb(" said that", " say that", " saying that", " said that"),
+    );
 
-    add("S", "present", present_verb(" see", " sees", " seeing", " seen"));
+    add(
+        "S",
+        "present",
+        present_verb(" see", " sees", " seeing", " seen"),
+    );
     add("SZ", "past", past_verb(" saw", " see", " seeing", " seen"));
 
-    add("BLS", "present", present_verb(" set", " sets", " setting", " set"));
-    add("BLSZ", "past", past_verb(" set", " set", " setting", " set"));
+    add(
+        "BLS",
+        "present",
+        present_verb(" set", " sets", " setting", " set"),
+    );
+    add(
+        "BLSZ",
+        "past",
+        past_verb(" set", " set", " setting", " set"),
+    );
 
-    add("PLS", "present", present_verb(" seem", " seems", " seeming", " seemed"));
-    add("PLTS", "present", present_verb(" seem to", " seems to", " seeming to", " seemed to"));
-    add("PLSZ", "past", past_verb(" seemed", " seem", " seeming", " seemed"));
-    add("PLTSDZ", "past", past_verb(" seemed to", " seem to", " seeming to", " seemed to"));
+    add(
+        "PLS",
+        "present",
+        present_verb(" seem", " seems", " seeming", " seemed"),
+    );
+    add(
+        "PLTS",
+        "present",
+        present_verb(" seem to", " seems to", " seeming to", " seemed to"),
+    );
+    add(
+        "PLSZ",
+        "past",
+        past_verb(" seemed", " seem", " seeming", " seemed"),
+    );
+    add(
+        "PLTSDZ",
+        "past",
+        past_verb(" seemed to", " seem to", " seeming to", " seemed to"),
+    );
 
     add("RBL", "present", text(" shall"));
     add("RBLD", "past", text(" should"));
 
-    add("RBZ", "present", present_verb(" show", " shows", " showing", " shown"));
-    add("RBDZ", "past", past_verb(" showed", " show", " showing", " shown"));
+    add(
+        "RBZ",
+        "present",
+        present_verb(" show", " shows", " showing", " shown"),
+    );
+    add(
+        "RBDZ",
+        "past",
+        past_verb(" showed", " show", " showing", " shown"),
+    );
 
-    add("RBT", "present", present_verb(" take", " takes", " taking", " taken"));
-    add("RBTD", "past", past_verb(" took", " take", " taking", " taken"));
+    add(
+        "RBT",
+        "present",
+        present_verb(" take", " takes", " taking", " taken"),
+    );
+    add(
+        "RBTD",
+        "past",
+        past_verb(" took", " take", " taking", " taken"),
+    );
 
-    add("RLT", "present", present_verb(" tell", " tells", " telling", " told"));
-    add("RLTD", "past", past_verb(" told", " tell", " telling", " told"));
+    add(
+        "RLT",
+        "present",
+        present_verb(" tell", " tells", " telling", " told"),
+    );
+    add(
+        "RLTD",
+        "past",
+        past_verb(" told", " tell", " telling", " told"),
+    );
 
-    add("PBG", "present", present_verb(" think", " thinks", " thinking", " thought"));
-    add("PBGT", "present", present_verb(" think that", " thinks that", " thinking that", " thought that"));
-    add("PBGD", "past", past_verb(" thought", " think", " thinking", " thought"));
-    add("PBGTD", "past", past_verb(" thought that", " think that", " thinking that", " thought that"));
+    add(
+        "PBG",
+        "present",
+        present_verb(" think", " thinks", " thinking", " thought"),
+    );
+    add(
+        "PBGT",
+        "present",
+        present_verb(
+            " think that",
+            " thinks that",
+            " thinking that",
+            " thought that",
+        ),
+    );
+    add(
+        "PBGD",
+        "past",
+        past_verb(" thought", " think", " thinking", " thought"),
+    );
+    add(
+        "PBGTD",
+        "past",
+        past_verb(
+            " thought that",
+            " think that",
+            " thinking that",
+            " thought that",
+        ),
+    );
 
-    add("RT", "present", present_verb(" try", " tries", " trying", " tried"));
-    add("RTS", "present", present_verb(" try to", " tries to", " trying to", " tried to"));
-    add("RTD", "past", past_verb(" tried", " try", " trying", " tried"));
-    add("RTSDZ", "past", past_verb(" tried to", " try to", " trying to", " tried to"));
+    add(
+        "RT",
+        "present",
+        present_verb(" try", " tries", " trying", " tried"),
+    );
+    add(
+        "RTS",
+        "present",
+        present_verb(" try to", " tries to", " trying to", " tried to"),
+    );
+    add(
+        "RTD",
+        "past",
+        past_verb(" tried", " try", " trying", " tried"),
+    );
+    add(
+        "RTSDZ",
+        "past",
+        past_verb(" tried to", " try to", " trying to", " tried to"),
+    );
 
-    add("RPB", "present", present_verb(" understand", " understands", " understanding", " understood"));
-    add("RPBT", "present", present_verb(" understand the", " understands the", " understanding the", " understood the"));
-    add("RPBD", "past", past_verb(" understood", " understand", " understanding", " understood"));
-    add("RPBTD", "past", past_verb(" understood the", " understand the", " understanding the", " understood the"));
+    add(
+        "RPB",
+        "present",
+        present_verb(
+            " understand",
+            " understands",
+            " understanding",
+            " understood",
+        ),
+    );
+    add(
+        "RPBT",
+        "present",
+        present_verb(
+            " understand the",
+            " understands the",
+            " understanding the",
+            " understood the",
+        ),
+    );
+    add(
+        "RPBD",
+        "past",
+        past_verb(
+            " understood",
+            " understand",
+            " understanding",
+            " understood",
+        ),
+    );
+    add(
+        "RPBTD",
+        "past",
+        past_verb(
+            " understood the",
+            " understand the",
+            " understanding the",
+            " understood the",
+        ),
+    );
 
-    add("Z", "present", present_verb(" use", " uses", " using", " used"));
+    add(
+        "Z",
+        "present",
+        present_verb(" use", " uses", " using", " used"),
+    );
     add("DZ", "past", past_verb(" used", " use", " using", " used"));
     add("TZ", "present", text(" used to"));
     add("TDZ", "past", text(" used to"));
 
-    add("P", "present", present_verb(" want", " wants", " wanting", " wanted"));
-    add("PT", "present", present_verb(" want to", " wants to", " wanting to", " wanted to"));
-    add("PD", "past", past_verb(" wanted", " want", " wanting", " wanted"));
-    add("PTD", "past", past_verb(" wanted to", " want to", " wanting to", " wanted to"));
+    add(
+        "P",
+        "present",
+        present_verb(" want", " wants", " wanting", " wanted"),
+    );
+    add(
+        "PT",
+        "present",
+        present_verb(" want to", " wants to", " wanting to", " wanted to"),
+    );
+    add(
+        "PD",
+        "past",
+        past_verb(" wanted", " want", " wanting", " wanted"),
+    );
+    add(
+        "PTD",
+        "past",
+        past_verb(" wanted to", " want to", " wanting to", " wanted to"),
+    );
 
     add("RBGS", "present", text(" will"));
     add("RBGSZ", "past", text(" would"));
 
-    add("RBS", "present", present_verb(" wish", " wishes", " wishing", " wished"));
-    add("RBTS", "present", present_verb(" wish to", " wishes to", " wishing to", " wished to"));
-    add("RBSZ", "past", past_verb(" wished", " wish", " wishing", " wished"));
-    add("RBTSDZ", "past", past_verb(" wished to", " wish to", " wishing to", " wished to"));
+    add(
+        "RBS",
+        "present",
+        present_verb(" wish", " wishes", " wishing", " wished"),
+    );
+    add(
+        "RBTS",
+        "present",
+        present_verb(" wish to", " wishes to", " wishing to", " wished to"),
+    );
+    add(
+        "RBSZ",
+        "past",
+        past_verb(" wished", " wish", " wishing", " wished"),
+    );
+    add(
+        "RBTSDZ",
+        "past",
+        past_verb(" wished to", " wish to", " wishing to", " wished to"),
+    );
 
-    add("RBG", "present", present_verb(" work", " works", " working", " worked"));
-    add("RBGT", "present", present_verb(" work on", " works on", " working on", " worked on"));
-    add("RBGD", "past", past_verb(" worked", " work", " working", " worked"));
-    add("RBGTD", "past", past_verb(" worked on", " work on", " working on", " worked on"));
-    drop(add);
+    add(
+        "RBG",
+        "present",
+        present_verb(" work", " works", " working", " worked"),
+    );
+    add(
+        "RBGT",
+        "present",
+        present_verb(" work on", " works on", " working on", " worked on"),
+    );
+    add(
+        "RBGD",
+        "past",
+        past_verb(" worked", " work", " working", " worked"),
+    );
+    add(
+        "RBGTD",
+        "past",
+        past_verb(" worked on", " work on", " working on", " worked on"),
+    );
     m
 }
 
@@ -994,7 +1756,9 @@ pub fn lookup(outline: &str) -> Option<String> {
         .and_then(Data::as_text)?;
     // `*` is the middle and only ever appears once; `!` is the subject and can
     // appear more than once, so it is replaced everywhere.
-    let phrase = format.replacen('*', middle_word, 1).replace('!', starter.word);
+    let phrase = format
+        .replacen('*', middle_word, 1)
+        .replace('!', starter.word);
 
     if let Some(update) = structure.verb_update {
         verb_form = update;

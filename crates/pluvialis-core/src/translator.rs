@@ -121,8 +121,9 @@ impl Translator {
                 .collect();
             outline.push(stroke);
 
-            if let Some(text) = dictionaries.lookup(&outline) {
-                let text = text.to_owned();
+            // lookup_owned so programmatic dictionaries (Lua, jeff-phrasing)
+            // are consulted too, after the JSON ones miss.
+            if let Some(text) = dictionaries.lookup_owned(&outline) {
                 let replaced: Vec<Translation> = self.history.drain(split..).collect();
                 let translation = Translation {
                     strokes: outline,
