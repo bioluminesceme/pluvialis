@@ -2657,6 +2657,7 @@ dependencies = [
  "pluvialis-core",
  "pluvialis-machine",
  "serde_json",
+ "windows",
 ]
 
 [[package]]

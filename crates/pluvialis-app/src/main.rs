@@ -8,11 +8,64 @@ use std::process::ExitCode;
 mod cli;
 mod live;
 
-fn main() -> ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+/// Reconnect to the terminal that launched us.
+///
+/// Release builds are linked as a GUI subsystem binary (see the attribute at
+/// the top of this file) so double clicking does not flash up a console. The
+/// cost is that a command line run starts with no standard handles at all:
+/// every `println!` is silently discarded and the shell does not wait for the
+/// process. Output appears only if the caller happens to redirect it, which
+/// makes the failure look like the command doing nothing.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+    use windows::core::PCSTR;
 
+    unsafe {
+        // Fails when there is no parent console, which is the ordinary case
+        // for a double click. Nothing to attach to, so leave things alone.
+        if AttachConsole(ATTACH_PARENT_PROCESS).is_err() {
+            return;
+        }
+
+        // Attaching does not reliably repoint the standard handles, and this
+        // process started without any, so set them explicitly. Rust's Windows
+        // stdio fetches the handle per write, so this takes effect even though
+        // it happens after startup.
+        let console = CreateFileA(
+            PCSTR(c"CONOUT$".as_ptr().cast()),
+            GENERIC_READ.0 | GENERIC_WRITE.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        );
+        if let Ok(console) = console {
+            let _ = SetStdHandle(STD_OUTPUT_HANDLE, console);
+            let _ = SetStdHandle(STD_ERROR_HANDLE, console);
+        }
+    }
+}
+
+fn main() -> ExitCode {
     // Any argument means command line mode. With none, open the GUI.
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Before the logger, so its stderr lands on the console too.
+    #[cfg(windows)]
+    if !args.is_empty() {
+        attach_parent_console();
+    }
+
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
     if !args.is_empty() {
         return cli::run(&args);
     }
