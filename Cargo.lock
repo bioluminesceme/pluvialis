@@ -2722,6 +2722,7 @@ dependencies = [
  "pluvialis-core",
  "pluvialis-machine",
  "pluvialis-output",
+ "pluvialis-python",
  "serde_json",
  "thiserror 2.0.19",
  "windows",

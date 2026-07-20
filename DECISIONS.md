@@ -146,3 +146,58 @@ and it should not assume drive F.
 The user confirmed it is low priority. The output toggle it was meant to carry
 already exists in the status bar, so nothing is lost but the ability to toggle
 without focusing the window. Not built.
+
+---
+
+## M6, revised after the user's direction
+
+### Python dictionaries run as they are, rather than being ported
+
+**Chosen:** embed CPython via PyO3 and run Plover's `.py` dictionaries unchanged.
+
+**Decided on measurement, not preference.** `jeff-phrasing.py` answers a lookup
+in 2.2us and misses in 1.2us. This project's own Rust JSON lookups measure 0.4us
+to 6.5us, and strokes arrive about 200,000us apart at 300wpm. Python is the same
+speed as the Rust path and both are irrelevant against the real budget, so the
+entire speed argument for porting evaporates.
+
+**Rejected:** porting each dictionary to Rust. It is a week per dictionary, it
+can silently drift from the original, and it does nothing for a dictionary
+downloaded next year. The user stopped this mid flight and was right.
+
+**Rejected:** converting by enumeration at import. It works only for
+dictionaries whose whole output can be enumerated, and it freezes them at
+conversion time.
+
+**Two costs, both real.** A Python dictionary is arbitrary code with no sandbox,
+the same trust model as Plover. And embedding ties the executable to a Python
+installation (CPython 3.12 at `C:\Python312`), which reverses the original
+"single exe, no Python" goal. The user chose this knowingly.
+
+### Python dictionaries load disabled
+
+**Chosen:** any `.py` in the dictionary folder is discovered and appears in the
+list with a checkbox, switched **off**.
+
+**Rationale:** the user asked to import any Python dictionary and enable or
+disable it, and separately said she is not sure she wants jeff-phrasing yet. Off
+by default satisfies both: they are visible and one click away, and nothing
+about her existing outlines changes until she asks.
+
+### JSON dictionaries stay JSON
+
+**Chosen:** no conversion of the user's JSON dictionaries to anything.
+
+**Rationale:** they are already native (101,407 entries in 52ms, lookups under
+7us), they are shared in place with the working Plover install that is her
+fallback, and she wants to keep editing her main dictionary in VS Code. A flat
+`"KAT": "cat"` map is the most editable form available. Converting would break
+Plover compatibility and gain nothing.
+
+### Open question: does the Lua host still have a purpose?
+
+It was built before we established that Python runs natively at full speed. Its
+one remaining advantage is that Lua scripts are sandboxed and Python
+dictionaries are not. If the user would never write a Lua dictionary herself, it
+is a feature with no user and should be cut rather than maintained. Raised with
+her, not yet answered.

@@ -116,6 +116,37 @@ impl DictionaryPane {
             dictionaries.dictionaries_mut().swap(a, b);
             changed = true;
         }
+
+        // Dictionaries that compute their answers (Python, Lua). Consulted only
+        // after every JSON one has missed, so they sit below the list rather
+        // than in it, and they are off until the user turns them on.
+        let programmatic = dictionaries.programmatic().len();
+        if programmatic > 0 {
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("Programmatic, consulted last")
+                    .small()
+                    .weak(),
+            );
+
+            for index in 0..programmatic {
+                ui.horizontal(|ui| {
+                    let entry = &mut dictionaries.programmatic_mut()[index];
+                    let mut enabled = entry.is_enabled();
+                    if ui.checkbox(&mut enabled, "").changed() {
+                        entry.set_enabled(enabled);
+                        changed = true;
+                    }
+                    let label = egui::RichText::new(entry.name());
+                    let label = if enabled { label } else { label.weak() };
+                    ui.label(label).on_hover_text(
+                        "Runs as written. A Python dictionary is not sandboxed, \
+                         which is the same trust model as Plover.",
+                    );
+                });
+            }
+        }
+
         if changed {
             self.invalidate();
         }

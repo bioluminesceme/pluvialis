@@ -291,10 +291,6 @@ impl LiveView {
     /// preventing startup: a program that refuses to open because one of two
     /// dictionaries moved is worse than one that says so and keeps working.
     fn load_dictionaries(&mut self) {
-        // jeff-phrasing is deliberately NOT loaded. The user said on 2026-07-20
-        // that she is not sure she will use it yet, so it must not quietly
-        // change what her outlines do. The port exists and is tested; it is
-        // simply not in the list. Do not add it back without asking.
         for name in crate::cli::DICTIONARIES {
             let path = std::path::Path::new(crate::cli::DICTIONARY_DIR).join(name);
             match Dictionary::load(&path) {
@@ -318,6 +314,44 @@ impl LiveView {
                         None => self.load_error = Some(message),
                     }
                 }
+            }
+        }
+
+        self.load_python_dictionaries();
+    }
+
+    /// Find Plover Python dictionaries and load them **disabled**.
+    ///
+    /// Disabled on purpose. The user asked to be able to import any Python
+    /// dictionary and enable or disable it, and separately said she is not sure
+    /// she wants jeff-phrasing yet. Loading them off satisfies both: they are
+    /// there in the list with a checkbox, and nothing about her writing changes
+    /// until she ticks one. Do not flip this default without asking.
+    fn load_python_dictionaries(&mut self) {
+        let directory = std::path::Path::new(crate::cli::DICTIONARY_DIR);
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            log::warn!("could not scan {} for dictionaries", directory.display());
+            return;
+        };
+
+        let mut found: Vec<std::path::PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "py"))
+            .collect();
+        found.sort();
+
+        for path in found {
+            match pluvialis_python::PythonDictionary::load(&path) {
+                Ok(mut dictionary) => {
+                    use pluvialis_core::ProgrammaticDictionary;
+                    dictionary.set_enabled(false);
+                    log::info!("found Python dictionary {} (disabled)", dictionary.name());
+                    self.dictionaries.push_programmatic(Box::new(dictionary));
+                }
+                // A dictionary that will not load is worth reporting by name,
+                // but must not stop the others or the program.
+                Err(e) => log::warn!("could not load {}: {e}", path.display()),
             }
         }
     }
