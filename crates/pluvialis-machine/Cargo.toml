@@ -12,3 +12,14 @@ log = { workspace = true }
 pluvialis-core = { version = "0.1.0", path = "../pluvialis-core" }
 serialport = "4"
 thiserror = { workspace = true }
+
+# SetupAPI to find the Stenograph writer, CreateFile/ReadFile/WriteFile to talk
+# to it. Same major version eframe already pulls in, so it costs no extra build.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }

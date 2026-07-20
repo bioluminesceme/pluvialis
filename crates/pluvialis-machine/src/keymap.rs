@@ -87,6 +87,30 @@ impl Keymap {
 
         keymap
     }
+
+    /// The Stentura binding, which the Stenograph writers also use.
+    ///
+    /// Every steno key is named after itself here, so the only interesting
+    /// entry is the one that is absent: `^` is a machine key with no steno
+    /// meaning, and Plover's Stentura keymap binds it to `no-op`. Leaving it
+    /// unbound is what keeps it inert.
+    ///
+    /// The `^` in dictionary values (`{^ing}`, `{^zaam}`) is the attachment
+    /// meta command and has nothing to do with this key. They never meet:
+    /// outlines are dictionary keys, attachment lives in dictionary values,
+    /// and no steno outline can contain `^`.
+    pub fn stentura() -> Self {
+        let mut keymap = Keymap::new();
+
+        for key in [
+            "#", "S-", "T-", "K-", "P-", "W-", "H-", "R-", "A-", "O-", "*", "-E", "-U", "-F", "-R",
+            "-P", "-B", "-L", "-G", "-T", "-S", "-D", "-Z",
+        ] {
+            keymap.bind(key, key);
+        }
+
+        keymap
+    }
 }
 
 #[cfg(test)]

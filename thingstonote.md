@@ -16,7 +16,11 @@ The opposite case also appears: code in Plover's Python that looks fine and is a
 
 ## Windows API (M4b, Stenograph USB)
 
-**`cbSize` is the struct size, not the buffer size.** In the `SetupDiGetDeviceInterfaceDetailA` call, `SP_DEVICE_INTERFACE_DETAIL_DATA_A.cbSize` must be **5** on x64 (a `DWORD` plus one `CHAR`, packed), even though you allocated a much larger buffer. Win32 requires exactly this. Setting it to the allocated size yields `ERROR_INVALID_USER_BUFFER` and the failure gives you no hint about why.
+**The device interface GUID is not the one written in Plover's source.** `transport_windows.py` spells `{c5682e20-8059-604a-b761-77c4de9d5dbf}`, but it builds the value from `uuid.UUID(...).bytes` (big endian) and hands the raw bytes to Win32, whose `GUID` is little endian in its first three fields. The real value, confirmed against this machine's registry, is **`{202e68c5-5980-4a60-b761-77c4de9d5dbf}`**. Using the string as written enumerates nothing and looks exactly like the writer being switched off, so it is a trap that costs an afternoon. Also do not reach for the INF's `ClassGuid` (`...6980...`): that is the setup class, one hex digit away and a different concept.
+
+**`cbSize` is the struct size, not the buffer size.** In `SetupDiGetDeviceInterfaceDetailA`, `SP_DEVICE_INTERFACE_DETAIL_DATA_A.cbSize` is **8** on x64 (a `DWORD` plus one `CHAR`, padded to 4 byte alignment) and 5 on x86 where the struct is packed, however large the buffer you allocated. Use `size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_A>()` and it is right on both. Setting it to the allocated size yields `ERROR_INVALID_USER_BUFFER`, which hints at nothing. (An earlier version of this file said 5 on x64. That was wrong, and it was wrong in the confident direction: `ctypes.sizeof` on the Python's own struct measures 8.)
+
+**Allocate the detail buffer as `Vec<u32>`, not `Vec<u8>`.** `cbSize` is written through that pointer, and a misaligned `u32` write is undefined behaviour. The device path then starts at `offset_of!(..., DevicePath)`, which is 4, not at the struct's padded size of 8.
 
 **`CREATE_ALWAYS | CREATE_NEW` is not a flags bug, but do not copy it.** The Python passes `2 | 1 == 3` to `CreateFileA`, and 3 happens to be `OPEN_EXISTING`. It works entirely by numeric coincidence. Write `OPEN_EXISTING` in Rust. If you see the Python and "fix" it to a real flag combination, you will change the value and break it.
 
@@ -43,7 +47,11 @@ This leaks a handle on every disconnect. In a forever-retry loop that is a slow 
 
 **The steno byte bit order runs high to low.** Each of the 4 steno bytes has its top two bits always set, and the low 6 bits are keys where **bit 5 (value 32) is the first key in the row and bit 0 (value 1) is the last**. It is `1 << (5 - j)`, not `1 << j`. Get this backwards and every stroke mirrors into a different, plausible-looking, wrong stroke.
 
-**Response must echo the request's sequence number and packet type.** If it does not, that is a protocol violation: reset the connection rather than trying to interpret the packet.
+**Response must echo the request's sequence number and packet type, *except* when it is an error.** An ERROR packet carries type `0x06` and so never echoes the request type. Check `is_error` first and dispatch on the code; only then apply the sequence and type checks, and only to non-error responses.
+
+Plover gets this backwards and it is probably the bug that bites the user: it checks sequence and type *before* looking at the code, so every error becomes an uncaught `ProtocolViolationException` that ends the reader thread. Its `except NoRealtimeFileException` handler is unreachable dead code. Since code 8 just means "not writing yet", this fires in the most ordinary situation there is. See `reference/STENOGRAPH-PROTOCOL.md` section 5, bug 4.
+
+**`^` is a machine key, not steno, and not the attachment `^`.** It is the first entry in the writer's key chart and has no steno meaning; the Stentura keymap binds it to `no-op`, so `Keymap::stentura()` leaves it unbound. This is unrelated to the `^` in dictionary values (`{^ing}`, `{^zaam}`), of which the user's dictionaries hold 959. They can never collide: outlines are dictionary keys, attachment lives in values, and no valid steno outline can contain `^` (measured: zero keys in either dictionary do).
 
 ---
 

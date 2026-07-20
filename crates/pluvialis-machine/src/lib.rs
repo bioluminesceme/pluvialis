@@ -18,17 +18,23 @@ pub mod gemini;
 pub mod keymap;
 pub mod machine;
 pub mod scanner;
+pub mod stenograph;
 
 pub use gemini::GeminiPr;
 pub use keymap::Keymap;
 pub use machine::{Machine, MachineError, MachineEvent, MachineStatus};
 pub use scanner::Scanner;
+#[cfg(windows)]
+pub use stenograph::Stenograph;
 
 /// Every machine Pluvialis can speak to, in the order Auto mode tries them.
 ///
-/// Stenograph first: it is the user's Luminex, and if both writers are attached
-/// that is the one she means. Gemini PR is the Peregrine.
+/// Stenograph first: it is the user's Luminex, her primary writer, and if both
+/// are attached that is the one she means. Gemini PR is the Peregrine.
 pub fn all_machines() -> Vec<Box<dyn Machine>> {
-    // Stenograph USB joins this list in M4b.
-    vec![Box::new(GeminiPr::new())]
+    vec![
+        #[cfg(windows)]
+        Box::new(Stenograph::new()),
+        Box::new(GeminiPr::new()),
+    ]
 }

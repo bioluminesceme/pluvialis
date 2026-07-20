@@ -234,8 +234,17 @@ The `Machine` trait (connect, stroke stream, status), the keymap layer, the Auto
 - **`MI_01` is a "Stenograph Writer Serial Port" and it is silent.** Two capture attempts at 9600 8N1 with DTR asserted, the second while actively writing on the machine, produced **zero bytes**. So there is no serial shortcut: M4b needs the documented SetupAPI/USB transport. The Luminex may have a menu setting to enable realtime serial output, which was not investigated.
 - That silent port is an active hazard for Auto mode. See `gemini::OTHER_PROTOCOL_VIDS`.
 
-Port the transport to Rust with the `windows` crate: SetupAPI enumeration by the writer GUID, `CreateFile` on the device path, packet pack/unpack, `send_receive`, stroke decoding. Then the state machine the Python version lacks: retry connect once per second forever, open `REALTIME.000`, poll with read requests, and on any I/O error reset state and drop back to retrying. Unplug, replug, power-cycle, and app-started-before-machine all converge to connected without user action.
-**Verify without the machine:** run it, confirm the status shows "Searching for writer", the log shows one attempt per second, CPU stays near idle, and handle count is flat after ten minutes (this specifically proves we did not reproduce Plover's handle leak). Real-machine verification is M8.
+**Code complete 2026-07-20, not yet confirmed against the writer.** `crates/pluvialis-machine/src/stenograph/`: `packet.rs` (wire format, portable, 17 tests), `transport.rs` (SetupAPI plus `CreateFile`, `cfg(windows)`), `writer.rs` (the read loop). Registered ahead of Gemini PR in `all_machines()`. 117 workspace tests pass, clippy clean.
+
+**Three corrections to this project's own reference material, all found by checking rather than trusting:**
+
+- **The device interface GUID in `reference/STENOGRAPH-PROTOCOL.md` was wrong.** Plover's source spells `{c5682e20-8059-...}` but byte swaps it on the way to Win32. The real value is `{202e68c5-5980-4a60-b761-77c4de9d5dbf}`, confirmed in this machine's registry. The wrong GUID enumerates nothing and looks identical to the writer being off.
+- **`cbSize` is 8 on x64, not 5** as `thingstonote.md` claimed. Measured with `ctypes.sizeof` on Plover's own struct.
+- **A fourth Plover bug**, likely the one that actually bites: an ERROR response cannot pass its sequence-and-type gate, so error code 8 ("not writing yet") raises an uncaught `ProtocolViolationException` that kills the reader thread. See section 5 of the protocol reference.
+
+**Still to verify (needs the writer powered on):** that it connects, that strokes arrive and translate, and the soak test below.
+
+**Soak test, without the machine:** run with no writer attached for ten minutes. Status stays "Searching", one connect attempt per second, CPU near idle, and **handle count flat** in Task Manager. A rising handle count means Plover's `disconnect()` bug was reproduced.
 
 ### M5. Output routing, dictionary tools, tray
 `SendInput` keystroke emulation for when another window has focus. Focus-based routing. Tray icon with an output on/off toggle. Dictionary pane (list with priority order, drag to reorder, enable/disable checkboxes), lookup window, and an entry editor that writes back to the JSON files.

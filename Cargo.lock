@@ -2677,6 +2677,7 @@ dependencies = [
  "pluvialis-core",
  "serialport",
  "thiserror 2.0.19",
+ "windows",
 ]
 
 [[package]]

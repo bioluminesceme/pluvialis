@@ -14,8 +14,38 @@ That implementation is `plover-stenograph` 2.1.1 by sammdot, and it is what curr
 The writer is exposed by the Stenograph WDF driver as a device interface class.
 
 ```
-Device interface class GUID: {c5682e20-8059-604a-b761-77c4de9d5dbf}
+Device interface class GUID: {202e68c5-5980-4a60-b761-77c4de9d5dbf}
 ```
+
+**This is not the GUID written in the Python source, and that is not a typo.**
+`transport_windows.py` says `{c5682e20-8059-604a-b761-77c4de9d5dbf}`, but it
+builds the value with `GUID = wintypes.BYTE * 16` filled from
+`uuid.UUID(...).bytes`, which is big endian. Win32's `GUID` is
+`{DWORD, WORD, WORD, BYTE[8]}`, little endian in its first three fields, so the
+first eight bytes arrive byte swapped. The swapped form above is what actually
+reaches SetupAPI, and it is what works.
+
+Verified on this machine rather than derived: the Luminex's `MI_00` interface is
+registered under exactly this GUID in
+`HKLM\SYSTEM\CurrentControlSet\Control\DeviceClasses`. To re-check on any
+machine:
+
+```powershell
+Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceClasses' | ForEach-Object {
+  $g = $_.PSChildName
+  Get-ChildItem $_.PSPath -EA SilentlyContinue | Where-Object { $_.PSChildName -match 'VID_112B' } |
+    ForEach-Object { "$g  $($_.PSChildName)" }
+}
+```
+
+Do not confuse this with the driver INF's `ClassGuid`,
+`{202e68c5-6980-4a60-b761-77c4de9d5dbf}` (note `6980`). That is the *setup
+class*, a different thing from the *device interface* class, and one hex digit
+apart. `wdfsgusb.inf` registers no interface GUID at all; the driver does it
+internally.
+
+Using the unswapped string enumerates nothing, and the failure looks exactly
+like the writer being switched off.
 
 Sequence:
 
@@ -28,7 +58,9 @@ Sequence:
 3. `SetupDiGetDeviceInterfaceDetailA(devinfo, &iface_data, NULL, 0, &required_size, NULL)`
    - expected to fail with `ERROR_INSUFFICIENT_BUFFER (0x7A)`; that is how you learn the buffer size
 4. Allocate `required_size`, set `cbSize`, call again to get the device path
-   - **`cbSize` gotcha:** the Python sets `cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_A)` which is 5 on x64 (DWORD + 1 char, packed), *not* the allocated size. Win32 requires exactly this. In Rust with the `windows` crate, set `cbSize` to 5 for the ANSI struct on 64-bit. Getting this wrong yields `ERROR_INVALID_USER_BUFFER`.
+   - **`cbSize` gotcha:** it is the size of the *struct*, never the allocated buffer. Measured, not assumed: `ctypes.sizeof` of the Python's struct is **8** on x64 (a `DWORD` plus one `CHAR`, padded to 4 byte alignment), and 5 on x86 where the struct is packed. Use `size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_A>()`, which the `windows` crate gets right on both. Passing the buffer size yields `ERROR_INVALID_USER_BUFFER`, whose message hints at nothing.
+   - **The path starts at offset 4**, not at the struct's padded size. Use `offset_of!(SP_DEVICE_INTERFACE_DETAIL_DATA_A, DevicePath)`.
+   - Allocate the buffer as `Vec<u32>`, not `Vec<u8>`: `cbSize` is written through that pointer and a misaligned `u32` write is undefined behaviour.
 5. `SetupDiDestroyDeviceInfoList(devinfo)`
 6. `CreateFileA(device_path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, 3, FILE_ATTRIBUTE_NORMAL, NULL)`
    - The Python passes `CREATE_ALWAYS | CREATE_NEW` which is `2 | 1 == 3`, and 3 is `OPEN_EXISTING`. It works because the numbers coincide. **Write `OPEN_EXISTING` in Rust and say so.**
@@ -162,6 +194,19 @@ These are the reason this project exists. All three are in the Python and all th
    The M4b soak test (ten minutes of failed connects, handle count flat) exists specifically to prove we did not repeat this.
 
 3. **`connect()` returns `false` instead of erroring** when no device is found, so callers that check for an exception see success. Our `connect()` returns `Result` and "no device present" is a distinct, quiet variant that the retry loop expects.
+
+4. **An error response is misread as a protocol violation, which kills the reader thread.** Found on 2026-07-20 while implementing this. `send_receive` only calls `handle_response` when the response echoes the request's sequence number *and* packet type:
+   ```python
+   if (writer_packet.sequence_number == request.sequence_number and
+       writer_packet.packet_type == request.packet_type):
+       return self.handle_response(writer_packet)
+   raise ProtocolViolationException()
+   ```
+   But an ERROR packet's type is `0x06`, which never equals `READ_FILE` (`0x13`). So `handle_response` is unreachable for errors, `NoRealtimeFileException` can never be raised, and the `except NoRealtimeFileException` in `base.py::run()` is dead code. What is raised instead is `ProtocolViolationException`, which `run()` does not catch at all, so it propagates out and ends the thread permanently.
+
+   Error code 8 means "the user has not started writing yet", which is the writer's state most of the time and certainly at startup. That makes this trivially easy to hit and is a strong candidate for the user's actual symptom.
+
+   **Our handling:** check `is_error` *first* and dispatch on the code. The packet is self-describing, so the type check cannot and should not apply to it, and a mismatched sequence on an error is logged rather than fatal. Sequence and type are still enforced strictly for non-error responses. And because every protocol violation resets the connection rather than ending anything, being wrong about this costs a reconnect, not a dead session.
 
 ---
 
