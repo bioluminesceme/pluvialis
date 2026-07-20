@@ -257,6 +257,13 @@ The `Machine` trait (connect, stroke stream, status), the keymap layer, the Auto
 Use `pluvialis-app.exe machine [SECONDS]` for both. `RUST_LOG=pluvialis_machine=trace` shows every attempt.
 
 ### M5. Output routing, dictionary tools, tray
+
+**Caret behaviour, decided by the user 2026-07-20: "just like Microsoft Word and Notepad."** Click anywhere, including mid sentence, and write there. Steno inserts at the caret exactly as a keyboard would, arrow keys and backspace behave normally, and there is no special "steno only appends at the end" mode. Undo (`*`) removes the last thing written wherever it went, rather than always at the end of the document.
+
+The document model already supports this: red raw-steno ranges are byte ranges, so an insertion in the middle shifts the ranges after it rather than invalidating them. What M5 adds is honouring the caret position instead of assuming the end.
+
+Note the ceiling: egui's `TextEdit` gives ordinary caret editing, but selection, undo of *manually typed* text, and IME are simpler than a real word processor. That is fine for a live-type view, and the document model is separate from the widget, so the view can be swapped later if it chafes.
+
 `SendInput` keystroke emulation for when another window has focus. Focus-based routing. Tray icon with an output on/off toggle. Dictionary pane (list with priority order, drag to reorder, enable/disable checkboxes), lookup window, and an entry editor that writes back to the JSON files.
 **Verify:** with Notepad focused, strokes type into Notepad; click back into Pluvialis, strokes go into the live view at the caret; toggle output off, nothing types anywhere; edit an entry, confirm the JSON file on disk changed and the new translation takes effect immediately.
 
@@ -266,6 +273,12 @@ Use `pluvialis-app.exe machine [SECONDS]` for both. `RUST_LOG=pluvialis_machine=
 
 ### M7. Documents, autosave, versioning, crash recovery
 Markdown save/open, autosave interval, snapshot history with retention, history browser and restore, crash recovery prompt.
+
+**Idea worth testing: the writer itself is a recovery source.** The Luminex records every stroke to `REALTIME.000`, and M4b already reads that file from offset 0 and deliberately discards the backlog so connecting does not dump old text into the document. That discarded data is a real safety net: if Pluvialis dies mid sentence, or the user writes before launching it, the strokes still exist on the machine and could be re-read and re-translated. Stronger than autosave, which can only recover as far as its last tick.
+
+Not a sync, and the distinction matters: the writer holds strokes, Pluvialis holds text derived from them through the user's dictionaries. One direction only, and edits made in Pluvialis are invisible to the writer.
+
+**Unmeasured, and it decides whether this is worth building:** how far back `REALTIME.000` reaches. Whether the Luminex starts a fresh one per power cycle, per file opened on the machine, or appends indefinitely is unknown. That is the difference between recovering the last few minutes and recovering weeks. Measure before designing anything around it.
 **Verify:** write, wait for autosave, kill the process from Task Manager, restart, confirm the text is recovered; restore an older snapshot from the history pane.
 
 ### M8. Real hardware
