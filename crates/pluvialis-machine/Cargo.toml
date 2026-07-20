@@ -7,3 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+crossbeam-channel = "0.5"
+log = { workspace = true }
+pluvialis-core = { version = "0.1.0", path = "../pluvialis-core" }
+serialport = "4"
+thiserror = { workspace = true }

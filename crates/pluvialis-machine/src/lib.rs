@@ -5,4 +5,30 @@
 //! a state, not a failure. It retries forever and never requires user action.
 //! Read `thingstonote.md` before implementing a protocol.
 //!
-//! Populated in M4a (trait, keymap wiring, Gemini PR) and M4b (Stenograph USB).
+//! Three layers, deliberately separate:
+//!
+//! 1. A protocol module ([`gemini`]) turns bytes into **machine keys**. It does
+//!    not know what a steno key is.
+//! 2. The [`keymap`] collapses machine keys onto the 23 steno keys. This is
+//!    where a split S becomes one `S-`.
+//! 3. The [`scanner`] owns connection policy, so no protocol reimplements
+//!    retrying and none can get it wrong by giving up.
+
+pub mod gemini;
+pub mod keymap;
+pub mod machine;
+pub mod scanner;
+
+pub use gemini::GeminiPr;
+pub use keymap::Keymap;
+pub use machine::{Machine, MachineError, MachineEvent, MachineStatus};
+pub use scanner::Scanner;
+
+/// Every machine Pluvialis can speak to, in the order Auto mode tries them.
+///
+/// Stenograph first: it is the user's Luminex, and if both writers are attached
+/// that is the one she means. Gemini PR is the Peregrine.
+pub fn all_machines() -> Vec<Box<dyn Machine>> {
+    // Stenograph USB joins this list in M4b.
+    vec![Box::new(GeminiPr::new())]
+}

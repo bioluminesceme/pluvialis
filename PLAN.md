@@ -160,9 +160,9 @@ Formatting reformats the whole history per call rather than incrementally, tradi
 Implement exactly the meta set your dictionaries use, verified by the audit above: `{^suffix}`, `{prefix^}`, `{^infix^}`, `{&glue}`, `{-|}`, `{>}`, punctuation (`{.}` `{,}` `{?}` `{!}` `{;}` `{:}`), `{}`, `{#key combos}`, `{*!}`, `{*-|}`, `{*}`, `{~|}`, and the `{MODE:...}`/`{PLOVER:...}` entries present. Anything unrecognized is logged by name, never silently dropped. Orthography rules for suffixes (the "-ing" doubling rules and friends).
 **Verify:** a test corpus of stroke sequences with expected output, including every meta command found in your two dictionaries. `pluvialis check` reports zero unknown metas across both files.
 
-### M3. Live-type window  <- CODE COMPLETE, awaiting the user's visual check
+### ~~M3. Live-type window~~ DONE (commit `b11bc7c`, verified by the user 2026-07-20)
 
-`crates/pluvialis-app/src/live.rs`. 7 new tests (65 total), clippy clean, release builds and runs.
+`crates/pluvialis-app/src/live.rs`. 7 new tests (65 total), clippy clean, release builds and runs. The user confirmed the verification below passes.
 
 Built: the document with a memoised red-highlighting layouter, the tape strip, the status bar, and the dev input box. Dictionaries load at startup from the same constants the CLI uses.
 
@@ -171,8 +171,6 @@ Three things worth knowing before M4a:
 - **The document is read only for now.** It is regenerated from translator history on every stroke, so a manual edit would be silently discarded by the next stroke. Typing at the caret needs a real document model and belongs with the router in M5. The live view is selectable and scrollable, just not editable.
 - **egui 0.35 unified `SidePanel` and `TopBottomPanel` into `egui::Panel::{left,right,top,bottom}`**, and `LayoutSection::byte_range` is now `Range<ByteIndex>`, not `Range<usize>`. Both are in `thingstonote.md`.
 - **`LiveView::apply(stroke)` is the seam M4a plugs into.** The dev box already goes through it, so a machine enters by the same door and nothing above the translator changes.
-
-**Remaining for M3:** the user runs the verification below. Anything it turns up is fixed before M4a starts.
 
 **What already exists and should be used, not rebuilt:**
 - `pluvialis_core::Translator` holds the history and returns a `Delta` per stroke.
@@ -196,7 +194,22 @@ Three things worth knowing before M4a:
 Main window: `TextEdit` with a custom layouter, tape strip on the right (recent strokes, raw steno plus translation), connection status bar. Raw untranslated strokes render red. Document model with red-range tracking and correct backspace handling. Temporary dev input: a text box where you type a raw stroke and press Enter, so the pipeline is exercisable before any machine exists (removed once M4a lands).
 **Verify:** type `KAT` in the dev box, "cat" appears; type nonsense like `TPHRPBLG`, it appears red as raw steno; type `*`, the red text disappears; correct spacing and capitalization after punctuation.
 
-### M4a. Machine trait, keymap layer, and Gemini PR
+### M4a. Machine trait, keymap layer, and Gemini PR  <- NEXT, start here
+
+**Measured on the real Peregrine, 2026-07-20. These are facts, not assumptions:**
+
+- The Peregrine enumerates as a QMK composite device, **`VID_FEED&PID_6060`**. `VID_FEED` is QMK's default vendor ID. Interface `MI_02` is the CDC serial endpoint and appeared as **COM11** (driver `usbser`). `MI_00` and `MI_01` are the ordinary HID keyboard interfaces and are not ours.
+- **9600 8N1 confirmed.** Opening the port works with and without DTR asserted, so DTR is not required.
+- Two real packets were captured and decoded correctly against `reference/GEMINI-PR-PROTOCOL.md`. Use them as test fixtures:
+
+  | Bytes | Chart indices | Machine keys | Stroke | Dictionary |
+  |---|---|---|---|---|
+  | `80 00 00 0C 00 00` | 24, 25 | `-E`, `-U` | `EU` | "I" |
+  | `80 2C 00 00 00 00` | 8, 10, 11 | `S2-`, `K-`, `P-` | `SKP` | "and" |
+
+  The second one is the keymap layer's whole justification arriving in real data: the split S key reports as **`S2-`**, not `S-`, and something has to collapse it. Do that in the keymap, never in the decoder.
+- **A silent port does not mean a broken port.** Two capture attempts returned zero bytes purely because the user was away from the keyboard. Before concluding anything is wrong with a serial machine, rule that out first.
+
 The `Machine` trait (connect, stroke stream, status), the keymap layer, the Auto scanner with its forever-retry loop, and Gemini PR as the first implementation (serial port, 9600 baud, six-byte packets with the MSB-as-first-byte rule).
 **Verify with real hardware, today:** plug in the Peregrine, launch Pluvialis, and write. Strokes appear in the live view, unknown chords come out red, `*` undoes. This is the first end-to-end proof and it needs nothing from Stenograph.
 

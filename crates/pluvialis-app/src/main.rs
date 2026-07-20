@@ -38,7 +38,7 @@ fn run_gui() -> eframe::Result {
     eframe::run_native(
         "Pluvialis",
         options,
-        Box::new(|_cc| Ok(Box::new(PluvialisApp::new()))),
+        Box::new(|cc| Ok(Box::new(PluvialisApp::new(cc)))),
     )
 }
 
@@ -47,14 +47,21 @@ struct PluvialisApp {
 }
 
 impl PluvialisApp {
-    fn new() -> Self {
-        PluvialisApp {
-            live: live::LiveView::new(),
-        }
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let mut live = live::LiveView::new();
+        // The scanner starts here and never stops while the app runs. There is
+        // deliberately no connect button and no machine picker.
+        live.start_machines(&cc.egui_ctx);
+        PluvialisApp { live }
     }
 }
 
 impl eframe::App for PluvialisApp {
+    // Non-painting per-frame work belongs in `logic`, painting in `ui`.
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.live.pump_machine();
+    }
+
     // egui 0.35 replaced `update(&Context)` with `ui(&mut Ui)`. Most egui
     // examples online still show the old signature.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

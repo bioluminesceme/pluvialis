@@ -19,6 +19,7 @@ use egui::{Color32, FontId, TextFormat};
 
 use pluvialis_core::format::{Formatted, format};
 use pluvialis_core::{Delta, Dictionary, DictionaryStack, Stroke, Translation, Translator};
+use pluvialis_machine::{MachineEvent, MachineStatus, Scanner, all_machines};
 
 /// Raw steno that found no dictionary entry.
 ///
@@ -35,6 +36,9 @@ fn raw_color(visuals: &egui::Visuals) -> Color32 {
         RAW_COLOR_LIGHT
     }
 }
+
+/// A connected writer. Green reads the same on both themes at this weight.
+const CONNECTED_COLOR: Color32 = Color32::from_rgb(0x2E, 0xA0, 0x43);
 
 const DOCUMENT_FONT_SIZE: f32 = 18.0;
 
@@ -67,6 +71,12 @@ pub struct LiveView {
 
     loaded: Vec<String>,
     load_error: Option<String>,
+
+    /// Kept alive so the machine thread keeps running; dropping it stops the
+    /// scan.
+    _scanner: Option<Scanner>,
+    machine_events: Option<crossbeam_channel::Receiver<MachineEvent>>,
+    machine_status: MachineStatus,
 }
 
 impl LiveView {
@@ -82,9 +92,59 @@ impl LiveView {
             dev_error: None,
             loaded: Vec::new(),
             load_error: None,
+            _scanner: None,
+            machine_events: None,
+            machine_status: MachineStatus::Searching,
         };
         view.load_dictionaries();
         view
+    }
+
+    /// Start the Auto scanner.
+    ///
+    /// Strokes arrive on the machine thread, but egui only runs when it has a
+    /// reason to. The forwarding thread exists to give it one: it wakes the UI
+    /// on each event, so the alternative (repainting continuously on the chance
+    /// a stroke arrives) is not needed. It also keeps egui out of
+    /// `pluvialis-machine`, which has to stay portable.
+    pub fn start_machines(&mut self, ctx: &egui::Context) {
+        let (machine_tx, machine_rx) = crossbeam_channel::unbounded();
+        let (app_tx, app_rx) = crossbeam_channel::unbounded();
+
+        let ctx = ctx.clone();
+        std::thread::Builder::new()
+            .name("pluvialis-wake".to_owned())
+            .spawn(move || {
+                for event in machine_rx {
+                    if app_tx.send(event).is_err() {
+                        break;
+                    }
+                    ctx.request_repaint();
+                }
+            })
+            .expect("spawning the wake thread");
+
+        self._scanner = Some(Scanner::spawn(all_machines(), machine_tx));
+        self.machine_events = Some(app_rx);
+    }
+
+    /// Drain whatever the machine thread has produced. Called once per frame.
+    pub fn pump_machine(&mut self) {
+        let Some(events) = &self.machine_events else {
+            return;
+        };
+        // Collect first so the borrow ends before `apply` needs `&mut self`.
+        let batch: Vec<MachineEvent> = events.try_iter().collect();
+
+        for event in batch {
+            match event {
+                MachineEvent::Stroke(stroke) => self.apply(stroke),
+                MachineEvent::Status(status) => {
+                    log::info!("machine status: {status:?}");
+                    self.machine_status = status;
+                }
+            }
+        }
     }
 
     /// Load the user's real dictionaries, in priority order.
@@ -279,9 +339,20 @@ impl LiveView {
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            // The machine arrives in M4a. Saying so is better than an empty bar
-            // that looks like a failed connection.
-            ui.label("No machine yet (M4a)");
+            // "Searching" is a normal resting state, not a failure, so it is
+            // worded and coloured as ordinary status. The whole point of the
+            // scanner is that no user action is ever required.
+            match &self.machine_status {
+                MachineStatus::Searching => {
+                    ui.label("Searching for a writer");
+                }
+                MachineStatus::Connected { machine, port } => {
+                    ui.colored_label(CONNECTED_COLOR, format!("{machine} on {port}"));
+                }
+                MachineStatus::Disconnected { reason } => {
+                    ui.label(format!("Writer disconnected ({reason}), searching"));
+                }
+            }
             ui.separator();
             match &self.load_error {
                 Some(error) => {
