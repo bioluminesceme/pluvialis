@@ -6,6 +6,7 @@ use eframe::egui;
 use std::process::ExitCode;
 
 mod cli;
+mod dictionaries;
 mod live;
 
 /// Reconnect to the terminal that launched us.

@@ -112,6 +112,9 @@ pub struct LiveView {
     /// The tray toggle. With this off, steno still translates and still shows
     /// on the tape, but nothing is typed anywhere.
     output_enabled: bool,
+
+    dictionary_pane: crate::dictionaries::DictionaryPane,
+    show_dictionaries: bool,
     #[cfg(windows)]
     keyboard: pluvialis_output::Keyboard,
 
@@ -137,6 +140,8 @@ impl LiveView {
             focused: true,
             last_destination: Destination::Document,
             output_enabled: true,
+            dictionary_pane: crate::dictionaries::DictionaryPane::new(),
+            show_dictionaries: false,
             #[cfg(windows)]
             keyboard: pluvialis_output::Keyboard::new(),
             _scanner: None,
@@ -392,6 +397,16 @@ impl LiveView {
             .resizable(true)
             .default_size(210.0)
             .show(ui, |ui| self.tape_strip(ui));
+
+        if self.show_dictionaries {
+            egui::Panel::left("dictionaries")
+                .resizable(true)
+                .default_size(260.0)
+                .show(ui, |ui| {
+                    self.dictionary_pane.ui(ui, &mut self.dictionaries);
+                });
+        }
+
         egui::CentralPanel::default().show(ui, |ui| self.document(ui));
     }
 
@@ -491,17 +506,17 @@ impl LiveView {
             );
 
             ui.separator();
+            ui.toggle_value(&mut self.show_dictionaries, "Dictionaries")
+                .on_hover_text("Priority order, enable and disable, and lookup");
+
+            ui.separator();
             match &self.load_error {
                 Some(error) => {
                     let color = raw_color(ui.visuals());
                     ui.colored_label(color, error);
                 }
                 None => {
-                    ui.label(format!(
-                        "{} entries: {}",
-                        self.dictionaries.entry_count(),
-                        self.loaded.join(", ")
-                    ));
+                    ui.label(format!("{} entries", self.dictionaries.entry_count()));
                 }
             }
         });
