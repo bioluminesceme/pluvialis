@@ -12,9 +12,11 @@ Named after *Pluvialis*, the golden-plover genus (Latin *pluvia*, rain). Checked
 
 ## Status
 
-**M0 through M4a are done and verified on real hardware. M4b (Stenograph USB, the Luminex) is code complete and connects to the real writer**; one step remains, listed in `PLAN.md`: confirm strokes arrive while someone writes on it, plus the writer-off soak test.
+**M0 through M4b are done and verified on real hardware. M5 is next.**
 
-The Peregrine writes into Pluvialis over Gemini PR, and the Luminex connects at 0.0s and is preferred over the Peregrine when both are attached. Neither needs a dialog or a machine selection. 117 tests, clippy clean at `-D warnings`.
+Both writers work. The Luminex, the user's primary machine, connects at 0.0s, is preferred over the Peregrine when both are attached, translates correctly against her real dictionaries, and renders unknown chords red in the live view. Neither machine needs a dialog or a machine selection, which is the goal this project exists for. 117 tests, clippy clean at `-D warnings`.
+
+One deferred, non-blocking check is listed under M4b in `PLAN.md`: the writer-off soak test for the searching path.
 
 **Do not trust this project's own reference documents over the machine.** Three M4b facts recorded in `reference/STENOGRAPH-PROTOCOL.md` and `thingstonote.md` turned out to be wrong (the device interface GUID, `cbSize`, and an unnoticed fourth Plover bug), each found by checking against the registry, `ctypes.sizeof`, or the source rather than trusting the note. All three are now corrected, and all three would have presented as "the writer is not plugged in".
 

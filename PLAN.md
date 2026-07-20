@@ -225,7 +225,7 @@ The M3 dev box is removed; the Clear button moved to the tape panel.
 The `Machine` trait (connect, stroke stream, status), the keymap layer, the Auto scanner with its forever-retry loop, and Gemini PR as the first implementation (serial port, 9600 baud, six-byte packets with the MSB-as-first-byte rule).
 **Verify with real hardware, today:** plug in the Peregrine, launch Pluvialis, and write. Strokes appear in the live view, unknown chords come out red, `*` undoes. This is the first end-to-end proof and it needs nothing from Stenograph.
 
-### M4b. Stenograph USB, with a connect loop that does not give up
+### M4b. Stenograph USB, with a connect loop that does not give up. DONE 2026-07-20
 
 **Measured on the real Luminex, 2026-07-20, with it powered on and attached:**
 
@@ -257,10 +257,9 @@ Also confirmed incidentally: priority order works. `APL`, `SKP` and `-T` exist i
 
 Nothing was swallowed on connect because clearing the memory left the realtime file empty, so the backlog was zero and it went live before the first stroke. With a non-empty file, expect the leading strokes to be discarded; that is the deliberate backlog behaviour.
 
-**Still to verify, needs a person at the machine:**
+**Confirmed in the GUI, 2026-07-20:** the user wrote on the Luminex in the live window. Translation lands in the document and unrecognised chords render red as raw steno. M4b is done.
 
-1. **Soak test with the writer off.** Ten minutes with nothing attached: status stays "Searching", one attempt per second, handle count flat. Proves the leak is absent on the *searching* path too, which the connected test could not cover because the writer was on.
-2. **Strokes into the GUI**, rather than the `machine` subcommand, so the live view and red raw steno are exercised on Luminex input.
+**One deferred check**, not blocking: the **soak test with the writer off**. Ten minutes with nothing attached, status stays "Searching", one attempt per second, handle count flat. The connected path already measured flat at 152 handles over 45s, so this only covers the *searching* path. Deferred because the writer was in use.
 
 Use `pluvialis-app.exe machine [SECONDS]` for both. `RUST_LOG=pluvialis_machine=trace` shows every attempt.
 
