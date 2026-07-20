@@ -101,6 +101,14 @@ fn logic(&mut self, ctx: &egui::Context, frame: &mut Frame) { }  // optional, no
 ```
 `CentralPanel::show` correspondingly takes `&mut Ui`, not `&Context`. **Essentially every egui example online still shows the old `update(&mut self, ctx: &Context, ...)` form**, so copying a snippet will not compile and the error (`method 'update' is not a member of trait`) does not point at the reason. Put non-drawing per-frame work in `logic`, drawing in `ui`.
 
+**egui 0.35 unified the panels into one type.** `SidePanel` and `TopBottomPanel` no longer exist; it is `egui::Panel::left/right/top/bottom(id)`, and the width setter is `default_size`, not `default_width`/`default_height`. `CentralPanel` is unchanged. The compile error is a plain "could not find `TopBottomPanel` in `egui`", which does not hint that a replacement exists.
+
+**`LayoutSection::byte_range` is `Range<ByteIndex>`, not `Range<usize>`.** `ByteIndex` is a newtype re-exported as `egui::text::ByteIndex`; build ranges with `ByteIndex(start)..ByteIndex(end)` and read them back through `.start.0`. It also does not index a `str`, so slicing needs `&text[r.start.0..r.end.0]`.
+
+**`TextEdit::frame` takes a `Frame`, not a `bool`.**
+
+**`Color32::PLACEHOLDER` in a `TextFormat` means "use the widget's text colour".** `painter.galley(pos, galley, text_color)` substitutes it at paint time. Use it for ordinary text in a custom layouter and the document follows light or dark mode for free. Anything given a literal colour does not, which is why the raw-steno red has a light and a dark shade: a single red cannot stay readable on both backgrounds, and egui defaults to dark.
+
 **`rust-version` in the workspace manifest gates dependency resolution.** Setting it to 1.90 silently held eframe back to 0.33.3 even though 0.35.0 was available, with only a quiet "available: v0.35.0, requires Rust 1.92" note. If a crate resolves older than expected, check this before anything else.
 
 **Cargo is not on `PATH` in fresh shells** until the user's profile is reloaded after the rustup install. Prefix commands with `$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH";` or the tool call fails with a confusing "not recognized".

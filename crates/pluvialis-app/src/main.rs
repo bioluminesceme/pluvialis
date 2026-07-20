@@ -6,6 +6,7 @@ use eframe::egui;
 use std::process::ExitCode;
 
 mod cli;
+mod live;
 
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -37,20 +38,26 @@ fn run_gui() -> eframe::Result {
     eframe::run_native(
         "Pluvialis",
         options,
-        Box::new(|_cc| Ok(Box::new(PluvialisApp::default()))),
+        Box::new(|_cc| Ok(Box::new(PluvialisApp::new()))),
     )
 }
 
-#[derive(Default)]
-struct PluvialisApp {}
+struct PluvialisApp {
+    live: live::LiveView,
+}
+
+impl PluvialisApp {
+    fn new() -> Self {
+        PluvialisApp {
+            live: live::LiveView::new(),
+        }
+    }
+}
 
 impl eframe::App for PluvialisApp {
     // egui 0.35 replaced `update(&Context)` with `ui(&mut Ui)`. Most egui
     // examples online still show the old signature.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("Pluvialis");
-            ui.label("Skeleton only. The live type view arrives in M3.");
-        });
+        self.live.ui(ui);
     }
 }

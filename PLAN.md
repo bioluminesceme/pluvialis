@@ -160,7 +160,19 @@ Formatting reformats the whole history per call rather than incrementally, tradi
 Implement exactly the meta set your dictionaries use, verified by the audit above: `{^suffix}`, `{prefix^}`, `{^infix^}`, `{&glue}`, `{-|}`, `{>}`, punctuation (`{.}` `{,}` `{?}` `{!}` `{;}` `{:}`), `{}`, `{#key combos}`, `{*!}`, `{*-|}`, `{*}`, `{~|}`, and the `{MODE:...}`/`{PLOVER:...}` entries present. Anything unrecognized is logged by name, never silently dropped. Orthography rules for suffixes (the "-ing" doubling rules and friends).
 **Verify:** a test corpus of stroke sequences with expected output, including every meta command found in your two dictionaries. `pluvialis check` reports zero unknown metas across both files.
 
-### M3. Live-type window  <- NEXT, start here
+### M3. Live-type window  <- CODE COMPLETE, awaiting the user's visual check
+
+`crates/pluvialis-app/src/live.rs`. 7 new tests (65 total), clippy clean, release builds and runs.
+
+Built: the document with a memoised red-highlighting layouter, the tape strip, the status bar, and the dev input box. Dictionaries load at startup from the same constants the CLI uses.
+
+Three things worth knowing before M4a:
+
+- **The document is read only for now.** It is regenerated from translator history on every stroke, so a manual edit would be silently discarded by the next stroke. Typing at the caret needs a real document model and belongs with the router in M5. The live view is selectable and scrollable, just not editable.
+- **egui 0.35 unified `SidePanel` and `TopBottomPanel` into `egui::Panel::{left,right,top,bottom}`**, and `LayoutSection::byte_range` is now `Range<ByteIndex>`, not `Range<usize>`. Both are in `thingstonote.md`.
+- **`LiveView::apply(stroke)` is the seam M4a plugs into.** The dev box already goes through it, so a machine enters by the same door and nothing above the translator changes.
+
+**Remaining for M3:** the user runs the verification below. Anything it turns up is fixed before M4a starts.
 
 **What already exists and should be used, not rebuilt:**
 - `pluvialis_core::Translator` holds the history and returns a `Delta` per stroke.
