@@ -212,15 +212,19 @@ These are the reason this project exists. All three are in the Python and all th
 
 ## 6. Driver
 
-The writer needs Stenograph's Windows driver installed or it will not enumerate under that GUID. It is available locally:
+**On this machine the driver is already installed and nothing needs running.** Verified 2026-07-20: `Steno Machine` at `USB\VID_112B&PID_000D&MI_00` is bound to service `wdfsgusbV3`, status OK, no error code. This section previously said installing it was a milestone M8 step; it was not needed then and is not needed now.
+
+The writer still needs that driver to enumerate under the interface GUID, so for a fresh machine the installer is here:
 
 ```
 F:\Steno\StenoMachines\USB_Writer_Drivers\USB Writer Drivers\Drivers\
-  StenographDriverInstall.exe   <- run this
+  StenographDriverInstall.exe
   RemoveDrivers.exe
   SGSerial.inf, wdfsgusb.inf, wdfsgusb.sys, .cat catalogs
 ```
 
-This install is a **milestone M8 step**, not needed before then.
+`wdfsgusb.inf` binds `USB\VID_112B&PID_000D&MI_00` plus a dozen older Stenograph models. Note it registers **no device interface GUID**; the driver does that internally, which is why the INF cannot be used to look the GUID up. Its `ClassGuid` is the *setup* class and is one hex digit away from the interface GUID, so it is an easy and costly thing to grab by mistake.
 
-Also at M8: close the official Plover first. Two programs cannot hold the writer handle at once.
+**The writer must be powered on to enumerate.** Switched off, no device nodes appear at all, so absence proves nothing about the driver.
+
+**Close official Plover before testing.** Two programs cannot hold the writer handle at once.

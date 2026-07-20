@@ -36,7 +36,7 @@ Run tests with `cargo test --workspace`, lint with `cargo clippy --workspace --a
 ## The user
 
 - Writes steno daily. This is a tool she will rely on, not a toy.
-- Hardware: **Luminex CSE** (Stenograph USB) and a **Peregrine** keyboard (Gemini PR over USB serial). The Peregrine is the test machine for most of the build; the Luminex only enters at M8.
+- Hardware: **Luminex CSE** (Stenograph USB) and a **Peregrine** keyboard (Gemini PR over USB serial). **The Luminex is her primary machine**; the Peregrine is only "much faster to set up". Both work as of M4b. Keep both attached when testing Auto mode, since that is what exercises the priority order.
 - Windows 11 is the 99% case. Linux is a distant maybe. macOS is not a target.
 - Her dictionaries live in `C:\Users\Corien\AppData\Local\plover\plover\` and are **shared with her working Plover install, not copied**. Official Plover stays installed as a fallback. Never move, rename, or restructure those files. Editing entries in place is expected; back up before the first write.
 
@@ -86,6 +86,7 @@ The user has been explicit about this, and it matters more than speed:
 5. **A test passes only with zero errors and zero warnings.** A warning is a failure.
 6. **Commit frequently**, so anything can be reverted cheaply.
 7. Keep `PLAN.md` updated as you go, removing completed steps. It is the session-recovery document.
+8. **Correct wrong reference material the moment you find it.** Standing instruction from the user, 2026-07-20. If something in `reference/`, `thingstonote.md`, `PLAN.md` or this file turns out to be factually wrong, fix the document as part of the same task rather than routing around it in code. A confidently wrong note is worse than no note: it sends the next session down a path that fails. Say plainly that the old entry was wrong and what the evidence was, and prefer ground truth (the registry, the running system, a measured value) over restating whatever source was wrong in the first place. Three M4b facts were wrong this way, and each presented as "the writer is not plugged in".
 
 ## Verification per milestone
 

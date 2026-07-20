@@ -145,7 +145,9 @@ fn logic(&mut self, ctx: &egui::Context, frame: &mut Frame) { }  // optional, no
 
 **The plan says "hardcoded to Stenograph USB" in its early framing.** That was superseded during planning: it became the Auto scanner once more protocols entered scope, which solves the same pain better. `PLAN.md` notes this, but if you see the two phrasings and they seem to conflict, Auto scanner is current.
 
-**Test with the Peregrine, not the Luminex.** From M4a onward there is real hardware available. The Luminex needs a driver install and only enters at M8. Do not build fake input scaffolding beyond the small M3 dev box, and do not wait for the Luminex to test anything.
+**Test with whichever writer is on, and prefer the Luminex.** This entry used to say "test with the Peregrine, not the Luminex, it needs a driver install and only enters at M8". All of that is now wrong: the driver was already installed, and M4b verified the Luminex end to end. It is the user's primary machine. Do not build fake input scaffolding; there is real hardware and `pluvialis machine [SECONDS]` shows exactly what it sends.
+
+**The writer must be switched on to enumerate at all.** With it off, no device nodes appear. Absence from the device tree therefore does not imply a driver problem, and `NotAttached` from the scanner is the correct, quiet response.
 
 **The dictionary files are shared with a working Plover install.** They live in `C:\Users\Corien\AppData\Local\plover\plover\` and official Plover stays installed as the user's fallback. Never move, rename, or restructure them. Back up before the first write from Pluvialis. Editing entries in place is expected and fine.
 

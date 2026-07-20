@@ -24,7 +24,7 @@ Rather than patch Plover, we build a separate program, **Pluvialis**, in Rust. I
 
 Name check done: Dotterel is taken (an Android steno app), Pluvia is heavily used. **Pluvialis** (the golden-plover genus, from Latin *pluvia*, rain) has no software conflicts.
 
-**Hardware answer to your question:** you do not need to plug the Luminex into this PC yet. Everything up to M7 is built and tested without it, using your **Peregrine** as the test machine from M4a onward. The Luminex and its driver install are only needed at M8. Plugging it in earlier does no harm, it just will not be used.
+**Hardware, corrected 2026-07-20 (this paragraph originally said the Luminex was not needed until M8, which is no longer true).** Both writers are attached and both work. The **Luminex** is the user's primary machine and was verified at M4b: it connects at 0.0s, is preferred over the Peregrine when both are present, and translates correctly in the live view. Its driver turned out to be **already installed**, which removed M8's first task. The **Peregrine** remains useful as a second machine for testing Auto mode's priority order.
 
 ---
 
@@ -289,7 +289,7 @@ Not a sync, and the distinction matters: the writer holds strokes, Pluvialis hol
 **Verify:** write, wait for autosave, kill the process from Task Manager, restart, confirm the text is recovered; restore an older snapshot from the history pane.
 
 ### M8. Real hardware
-Install the Stenograph driver from `F:\Steno\StenoMachines\USB_Writer_Drivers\`. Close official Plover (both would open the writer). Then the matrix that matters, which is the whole point of this project:
+**The driver install that used to head this list is already done**, discovered 2026-07-20: `wdfsgusbV3` is bound and healthy, and nothing needed installing. Close official Plover before testing (both would open the writer). Then the matrix that matters, which is the whole point of this project:
 1. App running, writer off → turn writer on and start writing → connects on its own, no clicks.
 2. Writer on first, then app start → connects immediately.
 3. Unplug USB mid-sentence → status changes, replug → resumes.
