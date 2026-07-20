@@ -249,10 +249,18 @@ The `Machine` trait (connect, stroke stream, status), the keymap layer, the Auto
 - **Error code 8 arrives about ten times a second while the writer is idle** and is absorbed as routine. This is the exact packet that bug 4 says kills Plover's reader thread, so the failure mode is not hypothetical: it is the writer's normal resting state.
 - **Handle count flat at 152 over 45 seconds**, threads flat at 2, memory flat at 12.9 MB, 0.06s CPU total (about 0.13%). This is the handle-leak proof for the connected path. Clean shutdown, exit 0.
 
+**Strokes confirmed on the real writer, 2026-07-20.** With the machine's memory cleared, connect at 0.0s, live at 6s, then six strokes captured: `OPL TPHOUF APL SKP -T OPB`. All six resolve to real entries in `cb_dictionary_full.json`: om, now have, am, and, the, `{on^}`.
+
+That lookup is the actual proof of correct decoding, not the fact that strokes arrived. A reversed bit order (`1 << j` rather than `1 << (5 - j)`) yields outlines that look entirely plausible; six of six landing on real dictionary entries is what rules it out. If the chart or bit order is ever touched, re-run this check rather than eyeballing the outlines.
+
+Also confirmed incidentally: priority order works. `APL`, `SKP` and `-T` exist in both dictionaries and all three resolved from `cb_dictionary_full.json`, the higher priority one (am not appel, and not en, the not het).
+
+Nothing was swallowed on connect because clearing the memory left the realtime file empty, so the backlog was zero and it went live before the first stroke. With a non-empty file, expect the leading strokes to be discarded; that is the deliberate backlog behaviour.
+
 **Still to verify, needs a person at the machine:**
 
-1. **Strokes.** Write on the Luminex and confirm outlines appear and translate. This is the last step of M4b and the only one that needs hands.
-2. **Soak test with the writer off.** Ten minutes with nothing attached: status stays "Searching", one attempt per second, handle count flat. Proves the leak is absent on the *searching* path too, which the test above could not cover because the writer was on.
+1. **Soak test with the writer off.** Ten minutes with nothing attached: status stays "Searching", one attempt per second, handle count flat. Proves the leak is absent on the *searching* path too, which the connected test could not cover because the writer was on.
+2. **Strokes into the GUI**, rather than the `machine` subcommand, so the live view and red raw steno are exercised on Luminex input.
 
 Use `pluvialis-app.exe machine [SECONDS]` for both. `RUST_LOG=pluvialis_machine=trace` shows every attempt.
 
