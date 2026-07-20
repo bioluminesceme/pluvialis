@@ -8,10 +8,12 @@
 //! order, then [`Translator`] longest match with retroactive correction.
 //! Formatting (spacing, capitalization, meta commands) arrives in M2.
 
+pub mod clean;
 pub mod dictionary;
 pub mod stroke;
 pub mod translator;
 
+pub use clean::{CleanError, CleanReport, clean_dictionary};
 pub use dictionary::{Dictionary, DictionaryError, DictionaryStack};
 pub use stroke::{Stroke, StrokeError};
 pub use translator::{Delta, Translation, Translator};

@@ -59,7 +59,9 @@ This leaks a handle on every disconnect. In a forever-retry loop that is a slow 
 
 ## Dictionaries and formatting (M1, M2)
 
-**`corien-dutch.json` has 433 keys that are not valid steno, and Plover rejects them too.** They look like `STKPWEU**URT` and `WEU*UF`: a doubled `U`, or a `*` placed after `-E`/`-U` when the canonical order is `A- O- * -E -U`. Verified against Plover's own `plover-stroke` 1.1.0, which raises `ValueError: invalid steno` on the same keys. These entries have never worked in Plover either, and that dictionary is not in her enabled list. **Do not "fix" the parser to accept them.** We skip them, count them, and print the first few.
+**The 433 invalid keys were removed on 2026-07-20** with `pluvialis clean --write`. The originals are at `corien-dutch.backup-1784541960.json` and the removed entries at `corien-dutch.removed-1784541960.json`, both in the Plover config directory. Verified afterwards: 7981 + 433 = 8414, kept entries byte identical, nothing lost. The history below explains why they were invalid.
+
+**`corien-dutch.json` had 433 keys that are not valid steno, and Plover rejects them too.** They look like `STKPWEU**URT` and `WEU*UF`: a doubled `U`, or a `*` placed after `-E`/`-U` when the canonical order is `A- O- * -E -U`. Verified against Plover's own `plover-stroke` 1.1.0, which raises `ValueError: invalid steno` on the same keys. These entries have never worked in Plover either, and that dictionary is not in her enabled list. **Do not "fix" the parser to accept them.** We skip them, count them, and print the first few.
 
 **To settle any parser disagreement, test against Plover's real implementation** rather than reasoning about it:
 ```

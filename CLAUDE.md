@@ -75,6 +75,15 @@ Each milestone in `PLAN.md` names its own check. Two deserve emphasis because th
 - **M4b soak test:** run with no writer attached for ten minutes. Status stays "Searching", one connect attempt per second, CPU near idle, and **handle count flat**. A rising handle count means the Python's `disconnect()` bug was reproduced.
 - **M8 hardware matrix:** app-then-writer, writer-then-app, mid-sentence unplug and replug, writer power-cycle. All four must reach connected with no clicks. If any needs user action, the project has not met its goal.
 
+## Writing to the user's dictionaries
+
+Her dictionary files are shared with a working Plover install. Anything that modifies them follows the pattern established by `pluvialis-core::clean`:
+
+1. **Dry run by default.** Writing is opt in (`--write`), never a side effect of running a report.
+2. **Verify before writing.** Reparse the result and check entry count and every retained value. On any mismatch, write nothing and return an error.
+3. **Keep the original and whatever was removed**, as timestamped siblings, so the edit is always reversible.
+4. **Preserve formatting.** Both dictionaries store one entry per line; edit lines rather than reserializing, or a two entry change produces a 93,000 line diff.
+
 ## Read `thingstonote.md`
 
 `thingstonote.md` collects the traps: places where the correct code looks like a bug, where Plover's code looks fine and is broken, and where an instinct to tidy something will break it. Several entries exist specifically because the urge to "fix" them is strong. Read the section for whichever milestone you are on, before writing that milestone's code rather than after debugging it.

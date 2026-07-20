@@ -22,12 +22,100 @@ const DICTIONARIES: [&str; 2] = ["cb_dictionary_full.json", "corien-dutch.json"]
 pub fn run(args: &[String]) -> std::process::ExitCode {
     match args.first().map(String::as_str) {
         Some("lookup") => lookup(&args[1..]),
+        Some("clean") => clean(&args[1..]),
         Some(other) => {
             eprintln!("unknown command {other:?}");
-            eprintln!("usage: pluvialis lookup <OUTLINE> [OUTLINE...]");
+            usage();
             std::process::ExitCode::from(2)
         }
         None => unreachable!("run is only called with at least one argument"),
+    }
+}
+
+fn usage() {
+    eprintln!("usage:");
+    eprintln!("  pluvialis lookup <OUTLINE> [OUTLINE...]");
+    eprintln!("  pluvialis clean [--write] [DICTIONARY...]");
+}
+
+/// Remove entries whose keys are not valid steno.
+///
+/// Defaults to a dry run. Rewriting dictionaries shared with a working Plover
+/// install should be something you ask for, not something that happens as a
+/// side effect of running a report.
+fn clean(args: &[String]) -> std::process::ExitCode {
+    let write = args.iter().any(|a| a == "--write");
+    let explicit: Vec<PathBuf> = args
+        .iter()
+        .filter(|a| !a.starts_with("--"))
+        .map(PathBuf::from)
+        .collect();
+
+    let targets: Vec<PathBuf> = if explicit.is_empty() {
+        DICTIONARIES
+            .iter()
+            .map(|name| PathBuf::from(DICTIONARY_DIR).join(name))
+            .collect()
+    } else {
+        explicit
+    };
+
+    if !write {
+        println!("Dry run. Nothing will be written. Add --write to apply.\n");
+    }
+
+    let mut failed = false;
+    for path in targets {
+        match pluvialis_core::clean_dictionary(&path, !write) {
+            Ok(report) => {
+                let name = report
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+
+                if report.removed_count() == 0 {
+                    println!("{name}: {} entries, all keys valid", report.total_entries);
+                    continue;
+                }
+
+                println!(
+                    "{name}: {} of {} entries have keys that are not valid steno",
+                    report.removed_count(),
+                    report.total_entries
+                );
+                for (key, value) in report.removed.iter().take(5) {
+                    let reason = report
+                        .reasons
+                        .get(key)
+                        .map(|r| r.to_string())
+                        .unwrap_or_default();
+                    println!("    {key:?} -> {value:?}   ({reason})");
+                }
+                if report.removed_count() > 5 {
+                    println!("    ... and {} more", report.removed_count() - 5);
+                }
+
+                match (&report.backup, &report.removed_file) {
+                    (Some(backup), Some(removed)) => {
+                        println!("  kept {} entries", report.kept_count());
+                        println!("  original saved to {}", backup.display());
+                        println!("  removed entries saved to {}", removed.display());
+                    }
+                    _ => println!("  would keep {} entries", report.kept_count()),
+                }
+            }
+            Err(e) => {
+                eprintln!("{}: {e}", path.display());
+                failed = true;
+            }
+        }
+    }
+
+    if failed {
+        std::process::ExitCode::FAILURE
+    } else {
+        std::process::ExitCode::SUCCESS
     }
 }
 
