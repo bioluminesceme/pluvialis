@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/pluvialis-core",
+    "crates/pluvialis-script",
+    "crates/pluvialis-machine",
+    "crates/pluvialis-output",
+    "crates/pluvialis-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/highwaykind/pluvialis"
+
+[workspace.dependencies]
+pluvialis-core = { path = "crates/pluvialis-core" }
+pluvialis-machine = { path = "crates/pluvialis-machine" }
+pluvialis-output = { path = "crates/pluvialis-output" }
+pluvialis-script = { path = "crates/pluvialis-script" }
+
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+
+[profile.release]
+# Steno is latency-sensitive: a stroke should never wait on the allocator or a
+# cold code path. These cost compile time, not runtime.
+lto = "thin"
+codegen-units = 1

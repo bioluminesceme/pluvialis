@@ -71,6 +71,23 @@ This leaks a handle on every disconnect. In a forever-retry loop that is a slow 
 
 ---
 
+## Toolchain and egui (M0 onward, hit during M0)
+
+**Do not use eframe's default features.** As of eframe 0.35 the default renderer is `wgpu`, which pulls `wgpu-hal`, which does not compile against `windows` 0.62 (a pile of D3D12 `Param`/`CanInto` trait errors). We use the `glow` (OpenGL) renderer instead: `default-features = false` plus `["accesskit", "default_fonts", "glow", "wayland", "x11"]`. It is lighter and drawing text is all we need. If a future dependency bump drags `wgpu` back in, this is what the error storm means.
+
+**egui 0.35 replaced `App::update` with `App::ui`.** The trait is now:
+```rust
+fn ui(&mut self, ui: &mut egui::Ui, frame: &mut Frame);   // required
+fn logic(&mut self, ctx: &egui::Context, frame: &mut Frame) { }  // optional, no painting
+```
+`CentralPanel::show` correspondingly takes `&mut Ui`, not `&Context`. **Essentially every egui example online still shows the old `update(&mut self, ctx: &Context, ...)` form**, so copying a snippet will not compile and the error (`method 'update' is not a member of trait`) does not point at the reason. Put non-drawing per-frame work in `logic`, drawing in `ui`.
+
+**`rust-version` in the workspace manifest gates dependency resolution.** Setting it to 1.90 silently held eframe back to 0.33.3 even though 0.35.0 was available, with only a quiet "available: v0.35.0, requires Rust 1.92" note. If a crate resolves older than expected, check this before anything else.
+
+**Cargo is not on `PATH` in fresh shells** until the user's profile is reloaded after the rustup install. Prefix commands with `$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH";` or the tool call fails with a confusing "not recognized".
+
+---
+
 ## Output routing and the live view (M3, M5)
 
 **Exactly one destination per output batch, never both.** Focused window decides: our document, or `SendInput` to another app. This is not a preference, it is what makes double-typing structurally impossible instead of an intermittent bug you chase forever. Any refactor that lets both paths fire has broken the core design.

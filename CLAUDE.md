@@ -46,7 +46,9 @@ Never both. That is what makes double-typing structurally impossible rather than
 
 ## Conventions
 
-- **Rust edition 2021**, MSVC toolchain (Visual Studio 2022 Community is already installed at `C:\Program Files\Microsoft Visual Studio\2022\Community`, so only rustup is needed).
+- **Rust edition 2024**, MSVC toolchain, `rust-version = "1.92"`. Installed: rustc 1.97.1, clippy, rustfmt. Visual Studio 2022 Community provides the linker.
+- **`$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH";`** is needed to prefix cargo commands in fresh shells until the profile is reloaded.
+- **eframe uses the `glow` renderer, not default features.** See `thingstonote.md`; the default `wgpu` path does not build here.
 - **UTF-8 everywhere.** Every file read and written. If you hit an encoding error, fix the encoding, never paper over it with lossy replacement.
 - **No em dashes** anywhere: prose, code comments, docs, commit messages, UI strings. Use a comma, colon, or parentheses.
 - **No emoji** in code or output; Windows terminals handle them badly.

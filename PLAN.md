@@ -120,17 +120,14 @@ Each one ends with something you can run and check, and gets its own git commit.
 
 **On hardware:** you do not need the Luminex for any milestone before M8, and you do not need to plug it into this PC at all until then. From M4a onward the **Peregrine** is the test machine, which is better than a fake dev input because it exercises the real stroke path. Plugging the Luminex in earlier does no harm, it just will not be used until its driver is installed at M8.
 
-### M0. Toolchain and skeleton
-Install rustup (MSVC toolchain is already present, so no Build Tools download is needed):
-```
-winget install Rustlang.Rustup
-rustup default stable-x86_64-pc-windows-msvc
-```
-Then create the workspace in `F:\Steno\Pluvialis` (which already contains `PLAN.md`, `CLAUDE.md`, `reference/`, and a git repo with one commit). Add the five crates from the architecture table, wire `pluvialis-app` to open an empty `eframe` window.
+### ~~M0. Toolchain and skeleton~~ DONE (commit `4055011`)
+rustc 1.97.1 MSVC, clippy and rustfmt installed. Workspace with all five crates builds; `pluvialis-app` opens a window titled Pluvialis; `cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 
-Dependencies to expect across the workspace: `eframe`/`egui`, `serde`/`serde_json`, `crossbeam-channel`, `anyhow`/`thiserror`, `log`/`env_logger`, `windows` (for SetupAPI and SendInput), `serialport`, `mlua`.
+Two deviations from the plan as written, both recorded in `thingstonote.md`:
+- **Edition 2024**, not 2021, with `rust-version = "1.92"` (the floor gates dependency resolution; too low a value silently held eframe at 0.33).
+- **eframe uses the `glow` renderer with `default-features = false`.** The default `wgpu` renderer pulls `wgpu-hal`, which does not compile against `windows` 0.62.
 
-**Verify:** `cargo run --release` opens a window titled Pluvialis. `cargo clippy` is clean (zero warnings, per the working agreement).
+Remaining dependencies get added in the milestone that needs them, rather than up front: `serde`/`serde_json` (M1), `crossbeam-channel` and `serialport` (M4a), `windows` (M4b), `mlua` (M6).
 
 ### M1. Core: strokes, dictionaries, translation
 `Stroke` parsing and canonical steno ordering (`#STKPWHR-AO*EUFRPBLGTSDZ`). JSON dictionary loader. Multi-dictionary priority lookup. Longest-match translator with retroactive correction and undo. No GUI, no meta commands yet.
