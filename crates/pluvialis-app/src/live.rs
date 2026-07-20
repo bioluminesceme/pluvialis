@@ -80,6 +80,16 @@ pub struct LiveView {
     /// The editable text the user sees. Steno lands at its caret.
     document: Document,
 
+    /// The document's caret has moved for a reason the text widget does not
+    /// know about, so the widget's own cursor must be told rather than asked.
+    ///
+    /// The widget tracks a cursor of its own and only updates it in response to
+    /// clicks and keystrokes. A stroke changes the text behind its back, so its
+    /// cursor stays where it was, and reading it back would undo the move the
+    /// stroke just made. That is not hypothetical: it put every new word
+    /// *before* the previous one, turning "I can" into "can I".
+    push_caret: bool,
+
     /// The formatter's last output.
     ///
     /// Not the document: it is a shadow of what steno alone has produced, kept
@@ -142,6 +152,7 @@ impl LiveView {
             dictionaries: DictionaryStack::new(),
             translator: Translator::new(),
             document: Document::new(),
+            push_caret: false,
             shadow: Formatted::default(),
             layout: None,
             tape: Vec::new(),
@@ -473,6 +484,7 @@ impl LiveView {
             Destination::Document => {
                 self.document.apply(edit);
                 self.layout = None;
+                self.push_caret = true;
             }
             Destination::OtherWindow => {
                 if !self.output_enabled {
@@ -572,8 +584,22 @@ impl LiveView {
             self.layout = None;
         }
 
-        // egui counts characters, the document counts bytes.
-        if let Some(cursor) = output.cursor_range {
+        // Which way the caret is copied depends on who moved it last, and
+        // getting this backwards is what turned "I can" into "can I".
+        //
+        // After a stroke the document is right and the widget is stale, so the
+        // widget is told. Otherwise the user is driving, by clicking or with
+        // the arrow keys, and the widget is right.
+        if self.push_caret {
+            self.push_caret = false;
+            let index = egui::text::CCursor::new(self.document.caret_char());
+            let mut state = output.state.clone();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(index)));
+            state.store(ui.ctx(), output.response.id);
+        } else if let Some(cursor) = output.cursor_range {
+            // egui counts characters, the document counts bytes.
             self.document.set_caret_char(cursor.primary.index.0);
         }
     }
