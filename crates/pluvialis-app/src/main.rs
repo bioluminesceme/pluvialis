@@ -8,6 +8,7 @@ use std::process::ExitCode;
 mod cli;
 mod dictionaries;
 mod live;
+mod storage;
 
 /// Reconnect to the terminal that launched us.
 ///
@@ -144,5 +145,11 @@ impl eframe::App for PluvialisApp {
     // examples online still show the old signature.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.live.ui(ui);
+    }
+
+    /// Save and record a clean exit, so the next start does not offer recovery
+    /// for a session that ended normally.
+    fn on_exit(&mut self) {
+        self.live.shutdown();
     }
 }

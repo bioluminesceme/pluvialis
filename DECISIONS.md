@@ -90,3 +90,59 @@ document recovers manual edits by diffing the widget's string against its own.
 **Rationale:** red means "this steno found no dictionary entry". Typed text has
 no outline behind it, so the colour would be meaningless. Existing red ranges
 shift, trim and split correctly around manual edits.
+
+---
+
+## M7
+
+### Snapshots are thinned by age, not by count
+
+**Chosen:** keep every snapshot from the last day, one per hour for the last
+week, one per day beyond that.
+
+**Rationale:** a count-based cap ("keep the last 50") behaves worst exactly when
+it matters most, during a long writing session, where 50 snapshots can cover
+twenty minutes. Age banding keeps recent work recoverable minute by minute while
+a year of history still costs very little.
+
+**Note:** the bands are aligned to real hour and day boundaries, so two
+snapshots a minute apart either side of an hour boundary are two hours as far as
+the policy is concerned. This surfaced as two failing tests whose expectations
+were written without thinking about boundary alignment; the behaviour is right
+and there is now a test pinning it down.
+
+### Recovery is offered, never applied
+
+**Chosen:** after an unclean exit, show a dialog offering the newest snapshot,
+with "Start fresh" as an equal option.
+
+**Rejected:** restoring automatically. Silently replacing a blank page the user
+meant to start with is its own kind of data loss, and it is the harder one to
+undo.
+
+### Crash detection is a marker file
+
+**Chosen:** write `.pluvialis-running` at startup, remove it in `on_exit`. Find
+one at startup and the previous run ended badly.
+
+**Verified rather than assumed:** `on_exit` is a real `eframe::App` trait method
+and the wgpu integration calls it. A wrong signature would have compiled
+silently as an inherent method and simply never run, leaving every clean exit
+looking like a crash.
+
+### Documents live in the project folder
+
+**Chosen:** `F:\Steno\Pluvialis\documents\`, with history in
+`.pluvialis-history` beside it.
+
+**Rejected:** AppData, which is where Windows would put it but where the user
+cannot easily find, back up or edit the files with ordinary tools.
+
+**Worth revisiting:** the path is currently hardcoded. It should be a setting,
+and it should not assume drive F.
+
+### Tray icon deferred
+
+The user confirmed it is low priority. The output toggle it was meant to carry
+already exists in the status bar, so nothing is lost but the ability to toggle
+without focusing the window. Not built.

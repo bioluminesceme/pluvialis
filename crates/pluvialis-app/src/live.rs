@@ -115,6 +115,13 @@ pub struct LiveView {
 
     dictionary_pane: crate::dictionaries::DictionaryPane,
     show_dictionaries: bool,
+
+    storage: crate::storage::Storage,
+    last_autosave: std::time::Instant,
+    save_error: Option<String>,
+    /// Snapshots offered after an unclean exit, newest first. Empty once the
+    /// user has answered.
+    recovery: Vec<crate::storage::Snapshot>,
     #[cfg(windows)]
     keyboard: pluvialis_output::Keyboard,
 
@@ -142,6 +149,10 @@ impl LiveView {
             output_enabled: true,
             dictionary_pane: crate::dictionaries::DictionaryPane::new(),
             show_dictionaries: false,
+            storage: crate::storage::Storage::new(documents_dir()),
+            last_autosave: std::time::Instant::now(),
+            save_error: None,
+            recovery: Vec::new(),
             #[cfg(windows)]
             keyboard: pluvialis_output::Keyboard::new(),
             _scanner: None,
@@ -149,7 +160,67 @@ impl LiveView {
             machine_status: MachineStatus::Searching,
         };
         view.load_dictionaries();
+        view.begin_session();
         view
+    }
+
+    /// Set the current document going and find out whether the last run
+    /// crashed.
+    fn begin_session(&mut self) {
+        self.storage
+            .set_current(self.storage.documents_dir().join("untitled.md"));
+
+        match self.storage.begin_session() {
+            Ok(false) => {}
+            Ok(true) => {
+                // A marker left behind means the previous run did not exit
+                // cleanly. Offer what was saved rather than restoring it
+                // silently: the user may well prefer the blank page.
+                self.recovery = self.storage.snapshots();
+                if !self.recovery.is_empty() {
+                    log::warn!(
+                        "the last session ended without a clean exit, {} snapshots available",
+                        self.recovery.len()
+                    );
+                }
+            }
+            Err(e) => {
+                log::error!("could not open the documents folder: {e}");
+                self.save_error = Some(e.to_string());
+            }
+        }
+    }
+
+    /// Save if the text has changed and the interval has elapsed.
+    ///
+    /// Called every frame; the interval and the dirty check make that cheap.
+    fn autosave(&mut self) {
+        if self.last_autosave.elapsed() < self.storage.autosave_interval {
+            return;
+        }
+        self.last_autosave = std::time::Instant::now();
+        self.save_now();
+    }
+
+    fn save_now(&mut self) {
+        match self.storage.save(self.document.text()) {
+            Ok(true) => {
+                self.save_error = None;
+                log::debug!("saved");
+            }
+            Ok(false) => {}
+            Err(e) => {
+                log::error!("could not save: {e}");
+                self.save_error = Some(e.to_string());
+            }
+        }
+    }
+
+    /// Save and clear the running marker, so the next start knows this was a
+    /// clean exit.
+    pub fn shutdown(&mut self) {
+        self.save_now();
+        self.storage.end_session();
     }
 
     /// Start the Auto scanner.
@@ -186,7 +257,16 @@ impl LiveView {
     /// routed by the focus that was true when it arrived rather than by
     /// whatever happens to be true partway through.
     pub fn pump_machine(&mut self, ctx: &egui::Context) {
+        let was_focused = self.focused;
         self.focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+
+        // Losing focus usually means the user has gone to another program,
+        // which is exactly when unsaved work is most likely to be forgotten
+        // about.
+        if was_focused && !self.focused {
+            self.save_now();
+        }
+        self.autosave();
 
         let Some(events) = &self.machine_events else {
             return;
@@ -408,6 +488,7 @@ impl LiveView {
         }
 
         egui::CentralPanel::default().show(ui, |ui| self.document(ui));
+        self.recovery_prompt(ui);
     }
 
     fn document(&mut self, ui: &mut egui::Ui) {
@@ -451,6 +532,61 @@ impl LiveView {
         // egui counts characters, the document counts bytes.
         if let Some(cursor) = output.cursor_range {
             self.document.set_caret_char(cursor.primary.index.0);
+        }
+    }
+
+    /// Offer the newest snapshot after an unclean exit.
+    ///
+    /// Offered, never applied automatically: restoring on top of a blank page
+    /// the user meant to start with would be its own kind of data loss.
+    fn recovery_prompt(&mut self, ui: &mut egui::Ui) {
+        if self.recovery.is_empty() {
+            return;
+        }
+
+        let mut restore = false;
+        let mut dismiss = false;
+
+        egui::Window::new("Recover unsaved work")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.label("The last session ended without closing properly.");
+                ui.label(format!(
+                    "{} saved versions are available.",
+                    self.recovery.len()
+                ));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Restore the newest").clicked() {
+                        restore = true;
+                    }
+                    if ui.button("Start fresh").clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+
+        if restore && let Some(snapshot) = self.recovery.first().cloned() {
+            match self.storage.read_snapshot(&snapshot) {
+                Ok(text) => {
+                    // Straight into the document: recovered text is ordinary
+                    // text with no steno history behind it, so it carries no
+                    // red and the shadow stays empty.
+                    self.document.reconcile(&text);
+                    self.document.set_caret(text.len());
+                    self.layout = None;
+                    log::info!("recovered {} characters", text.len());
+                }
+                Err(e) => {
+                    log::error!("could not read the snapshot: {e}");
+                    self.save_error = Some(e.to_string());
+                }
+            }
+        }
+        if restore || dismiss {
+            self.recovery.clear();
         }
     }
 
@@ -522,6 +658,14 @@ impl LiveView {
         });
         ui.add_space(2.0);
     }
+}
+
+/// Where documents and their history live.
+///
+/// Next to the executable's project folder rather than in AppData, so the user
+/// can find, back up and edit them with ordinary tools.
+fn documents_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(r"F:\Steno\Pluvialis\documents")
 }
 
 /// Describe what one stroke did, for the tape.
