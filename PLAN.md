@@ -263,7 +263,7 @@ Nothing was swallowed on connect because clearing the memory left the realtime f
 
 Use `pluvialis-app.exe machine [SECONDS]` for both. `RUST_LOG=pluvialis_machine=trace` shows every attempt.
 
-### M5. Output routing, dictionary tools, tray
+### M5. Output routing, dictionary tools, tray. DONE 2026-07-20 except the tray
 
 **Caret behaviour, decided by the user 2026-07-20: "just like Microsoft Word and Notepad."** Click anywhere, including mid sentence, and write there. Steno inserts at the caret exactly as a keyboard would, arrow keys and backspace behave normally, and there is no special "steno only appends at the end" mode. Undo (`*`) removes the last thing written wherever it went, rather than always at the end of the document.
 
@@ -274,11 +274,45 @@ Note the ceiling: egui's `TextEdit` gives ordinary caret editing, but selection,
 `SendInput` keystroke emulation for when another window has focus. Focus-based routing. Tray icon with an output on/off toggle. Dictionary pane (list with priority order, drag to reorder, enable/disable checkboxes), lookup window, and an entry editor that writes back to the JSON files.
 **Verify:** with Notepad focused, strokes type into Notepad; click back into Pluvialis, strokes go into the live view at the caret; toggle output off, nothing types anywhere; edit an entry, confirm the JSON file on disk changed and the new translation takes effect immediately.
 
-### M6. Lua dictionaries, conversion tools, jeff-phrasing port
+### M6. Programmatic dictionaries. LARGELY DONE 2026-07-20, redesigned mid flight
+
+**M6 was redesigned by the user on 2026-07-20 and the original plan for it is superseded.**
+
+The plan said: port jeff-phrasing to native Rust, and offer Lua for programmatic
+dictionaries. What actually happened:
+
+- The jeff-phrasing port was built and checked against the Python over 218,071
+  outlines. The user then stopped it: "Don't make the Jeff's phrasing native
+  please, I'm not sure I'll use it yet." The code is in the tree but **not
+  loaded**, and there is a comment where it would be loaded saying not to add it
+  back without asking.
+- She asked instead that **any** Python dictionary be importable and
+  enable/disable-able. Measurement settled how: `jeff-phrasing.py` answers in
+  2.2us and misses in 1.2us, against 0.4us to 6.5us for our own Rust JSON
+  lookups and ~200,000us between strokes. Python is not slow here, so porting
+  buys nothing perceivable and costs a rewrite per dictionary.
+- So `pluvialis-python` embeds CPython via PyO3 and runs Plover's `.py`
+  dictionaries unchanged. Validated against the real `jeff-phrasing.py` over all
+  218,071 outlines. They appear in the dictionary list **switched off**.
+- **JSON dictionaries stay JSON**, shared in place with Plover, editable in VS
+  Code. No conversion. The user was explicit about her main dictionary staying a
+  solo editable file.
+
+**Still open in M6:**
+
+- Does the Lua host still earn its place? It was built before Python was known
+  to run at full speed. Its only remaining advantage is sandboxing. Raised with
+  the user, unanswered.
+- `convert rtf` was never built. Still a genuine gap for importing commercial
+  dictionaries. `convert json-to-lua` is now pointless and should be dropped.
+- Programmatic dictionaries are consulted **after** all JSON ones rather than
+  interleaved by priority. Safe default (can only add behaviour, never shadow an
+  existing outline), but real interleaving is a feature.
+
 `mlua` host with the `lookup`/`reverse_lookup` contract and a sandbox (no filesystem or network from dictionary scripts). The `convert` and `check` subcommands. Native Rust jeff-phrasing with the differential test against the Python original.
 **Verify:** a toy Lua dictionary resolves strokes the JSON files miss; the jeff-phrasing differential test passes for every enumerated stroke; phrasing strokes work in the live view.
 
-### M7. Documents, autosave, versioning, crash recovery
+### M7. Documents, autosave, versioning, crash recovery. DONE 2026-07-20
 Markdown save/open, autosave interval, snapshot history with retention, history browser and restore, crash recovery prompt.
 
 **Idea worth testing: the writer itself is a recovery source.** The Luminex records every stroke to `REALTIME.000`, and M4b already reads that file from offset 0 and deliberately discards the backlog so connecting does not dump old text into the document. That discarded data is a real safety net: if Pluvialis dies mid sentence, or the user writes before launching it, the strokes still exist on the machine and could be re-read and re-translated. Stronger than autosave, which can only recover as far as its last tick.

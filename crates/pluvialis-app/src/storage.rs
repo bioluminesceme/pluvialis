@@ -57,6 +57,35 @@ pub struct Snapshot {
     pub at: u64,
 }
 
+/// How long ago, in words.
+///
+/// Relative rather than absolute because it answers the question actually being
+/// asked of a history list ("how far back does this go") without needing a date
+/// formatting dependency for a handful of labels.
+pub fn how_long_ago(at: u64, now: u64) -> String {
+    const MINUTE: u64 = 60 * 1000;
+    const HOUR: u64 = 60 * MINUTE;
+    const DAY: u64 = 24 * HOUR;
+
+    let age = now.saturating_sub(at);
+    let plural = |n: u64, unit: &str| match n {
+        1 => format!("1 {unit} ago"),
+        n => format!("{n} {unit}s ago"),
+    };
+
+    match age {
+        a if a < MINUTE => "just now".to_owned(),
+        a if a < HOUR => plural(a / MINUTE, "minute"),
+        a if a < DAY => plural(a / HOUR, "hour"),
+        a => plural(a / DAY, "day"),
+    }
+}
+
+/// Milliseconds since the epoch, for callers building a history view.
+pub fn now() -> u64 {
+    now_millis()
+}
+
 /// Parse `1784541960123.md` back into its timestamp.
 fn snapshot_time(path: &Path) -> Option<u64> {
     path.file_stem()?.to_str()?.parse().ok()
@@ -292,6 +321,27 @@ mod tests {
             .into_iter()
             .filter(|&keep| keep)
             .count()
+    }
+
+    #[test]
+    fn ages_are_described_in_words() {
+        let now = 100 * DAY;
+        assert_eq!(how_long_ago(now, now), "just now");
+        assert_eq!(how_long_ago(now - 30_000, now), "just now");
+        assert_eq!(how_long_ago(now - 60_000, now), "1 minute ago");
+        assert_eq!(how_long_ago(now - 5 * 60_000, now), "5 minutes ago");
+        assert_eq!(how_long_ago(now - HOUR, now), "1 hour ago");
+        assert_eq!(how_long_ago(now - 3 * HOUR, now), "3 hours ago");
+        assert_eq!(how_long_ago(now - DAY, now), "1 day ago");
+        assert_eq!(how_long_ago(now - 9 * DAY, now), "9 days ago");
+    }
+
+    /// A snapshot dated in the future must not underflow into "584 million
+    /// years ago", which is what subtracting the wrong way round produces.
+    #[test]
+    fn a_future_timestamp_is_described_as_just_now() {
+        let now = 100 * DAY;
+        assert_eq!(how_long_ago(now + 5000, now), "just now");
     }
 
     #[test]

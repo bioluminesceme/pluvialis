@@ -122,6 +122,10 @@ pub struct LiveView {
     /// Snapshots offered after an unclean exit, newest first. Empty once the
     /// user has answered.
     recovery: Vec<crate::storage::Snapshot>,
+    show_history: bool,
+    /// Listed when the window opens rather than every frame, since it reads the
+    /// directory.
+    history: Vec<crate::storage::Snapshot>,
     #[cfg(windows)]
     keyboard: pluvialis_output::Keyboard,
 
@@ -153,6 +157,8 @@ impl LiveView {
             last_autosave: std::time::Instant::now(),
             save_error: None,
             recovery: Vec::new(),
+            show_history: false,
+            history: Vec::new(),
             #[cfg(windows)]
             keyboard: pluvialis_output::Keyboard::new(),
             _scanner: None,
@@ -527,6 +533,7 @@ impl LiveView {
 
         egui::CentralPanel::default().show(ui, |ui| self.document(ui));
         self.recovery_prompt(ui);
+        self.history_window(ui);
     }
 
     fn document(&mut self, ui: &mut egui::Ui) {
@@ -570,6 +577,83 @@ impl LiveView {
         // egui counts characters, the document counts bytes.
         if let Some(cursor) = output.cursor_range {
             self.document.set_caret_char(cursor.primary.index.0);
+        }
+    }
+
+    /// Browse and restore earlier versions.
+    fn history_window(&mut self, ui: &mut egui::Ui) {
+        if !self.show_history {
+            return;
+        }
+
+        let now = crate::storage::now();
+        let mut restore: Option<crate::storage::Snapshot> = None;
+        let mut open = true;
+
+        egui::Window::new("History")
+            .open(&mut open)
+            .default_size([320.0, 400.0])
+            .show(ui.ctx(), |ui| {
+                if self.history.is_empty() {
+                    ui.label("No saved versions yet.");
+                    ui.label(
+                        egui::RichText::new(
+                            "A version is written whenever the text changes and \
+                             the document is saved.",
+                        )
+                        .small()
+                        .weak(),
+                    );
+                    return;
+                }
+
+                ui.label(
+                    egui::RichText::new(format!("{} versions", self.history.len()))
+                        .small()
+                        .weak(),
+                );
+                ui.separator();
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for snapshot in &self.history {
+                            ui.horizontal(|ui| {
+                                ui.label(crate::storage::how_long_ago(snapshot.at, now));
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.button("Restore").clicked() {
+                                            restore = Some(snapshot.clone());
+                                        }
+                                    },
+                                );
+                            });
+                        }
+                    });
+            });
+
+        if let Some(snapshot) = restore {
+            match self.storage.read_snapshot(&snapshot) {
+                Ok(text) => {
+                    // Saved first, so restoring is itself undoable: the version
+                    // being replaced becomes the newest snapshot rather than
+                    // being lost.
+                    self.save_now();
+                    self.document.reconcile(&text);
+                    self.document.set_caret(text.len());
+                    self.layout = None;
+                    self.history = self.storage.snapshots();
+                    log::info!("restored {} characters", text.len());
+                }
+                Err(e) => {
+                    log::error!("could not read the snapshot: {e}");
+                    self.save_error = Some(e.to_string());
+                }
+            }
+        }
+        if !open {
+            self.show_history = false;
         }
     }
 
@@ -682,6 +766,21 @@ impl LiveView {
             ui.separator();
             ui.toggle_value(&mut self.show_dictionaries, "Dictionaries")
                 .on_hover_text("Priority order, enable and disable, and lookup");
+
+            if ui
+                .toggle_value(&mut self.show_history, "History")
+                .on_hover_text("Earlier saved versions of this document")
+                .clicked()
+                && self.show_history
+            {
+                // Reading the directory once on open, rather than every frame.
+                self.history = self.storage.snapshots();
+            }
+
+            if let Some(error) = &self.save_error {
+                let color = raw_color(ui.visuals());
+                ui.colored_label(color, format!("Not saving: {error}"));
+            }
 
             ui.separator();
             match &self.load_error {
