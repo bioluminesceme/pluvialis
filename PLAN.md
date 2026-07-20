@@ -123,9 +123,10 @@ Each one ends with something you can run and check, and gets its own git commit.
 ### ~~M0. Toolchain and skeleton~~ DONE (commit `a071294`)
 rustc 1.97.1 MSVC, clippy and rustfmt installed. Workspace with all five crates builds; `pluvialis-app` opens a window titled Pluvialis; `cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 
-Two deviations from the plan as written, both recorded in `thingstonote.md`:
-- **Edition 2024**, not 2021, with `rust-version = "1.92"` (the floor gates dependency resolution; too low a value silently held eframe at 0.33).
-- **eframe uses the `glow` renderer with `default-features = false`.** The default `wgpu` renderer pulls `wgpu-hal`, which does not compile against `windows` 0.62.
+One deviation from the plan as written, recorded in `thingstonote.md`:
+- **Edition 2024**, not 2021, with `rust-version = "1.97"` (the floor gates dependency resolution; too low a value silently held eframe at 0.33).
+
+Everything is on latest published versions: rustc 1.97.1, eframe and egui 0.35.0. eframe uses default features, including the `wgpu` renderer. A `wgpu-hal` compile failure seen once during M0 did not reproduce and is noted as transient.
 
 Remaining dependencies get added in the milestone that needs them, rather than up front: `serde`/`serde_json` (M1), `crossbeam-channel` and `serialport` (M4a), `windows` (M4b), `mlua` (M6).
 

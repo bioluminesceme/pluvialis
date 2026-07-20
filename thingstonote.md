@@ -73,7 +73,7 @@ This leaks a handle on every disconnect. In a forever-retry loop that is a slow 
 
 ## Toolchain and egui (M0 onward, hit during M0)
 
-**Do not use eframe's default features.** As of eframe 0.35 the default renderer is `wgpu`, which pulls `wgpu-hal`, which does not compile against `windows` 0.62 (a pile of D3D12 `Param`/`CanInto` trait errors). We use the `glow` (OpenGL) renderer instead: `default-features = false` plus `["accesskit", "default_fonts", "glow", "wayland", "x11"]`. It is lighter and drawing text is all we need. If a future dependency bump drags `wgpu` back in, this is what the error storm means.
+**A `wgpu-hal` build failure during M0 did not reproduce, so treat it as transient.** The first build attempt died in `wgpu-hal` with a wall of Direct3D12 `Param`/`CanInto` trait errors against `windows` 0.62. Re-testing the identical configuration later (same `Cargo.lock`, same wgpu-hal 29.0.4, same windows 0.62.2, release profile, default eframe features) built clean and ran fine. The most likely cause is a partially resolved dependency graph while the manifest was being edited from eframe 0.33.3 to 0.35, but that is a guess and it did not reproduce. **We use eframe's default features, including the `wgpu` renderer.** If those D3D12 errors reappear, try `cargo clean` and a fresh resolve before concluding anything is genuinely incompatible.
 
 **egui 0.35 replaced `App::update` with `App::ui`.** The trait is now:
 ```rust

@@ -7,16 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# The glow (OpenGL) renderer, not the default wgpu one. As of eframe 0.35,
-# wgpu pulls wgpu-hal, which does not compile against windows 0.62. glow is
-# also lighter and more than enough to draw text.
-eframe = { version = "0.35", default-features = false, features = [
-    "accesskit",
-    "default_fonts",
-    "glow",
-    "wayland",
-    "x11",
-] }
+eframe = "0.35"
 egui = "0.35"
 env_logger = "0.11"
 log = { workspace = true }
