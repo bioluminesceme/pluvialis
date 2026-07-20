@@ -14,6 +14,7 @@ pub mod document;
 pub mod format;
 pub mod orthography;
 pub mod orthography_rules;
+pub mod rtfcre;
 pub mod stroke;
 pub mod translator;
 

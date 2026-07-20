@@ -214,3 +214,77 @@ selecting standard libraries was not enough, because the base library still
 carried `dofile` and `loadfile`, and both read files from disk. If a sandboxed
 scripting layer ever returns, test the escape rather than assuming the library
 selection covers it.
+
+### The jeff-phrasing Rust port was removed
+
+**Decided by the user, 2026-07-20:** "Jeff phrasing rust port can be removed (or
+archive until we've confirmed in the final app that the python dictionary works
+well)."
+
+Archived rather than deleted, which satisfies both halves: `phrasing.rs` and
+`phrasing_dictionary.rs` are in the Recycle Bin and in git history at 67276c6~.
+
+The confirmation she asked for was run first, not assumed. The differential test
+against the real `jeff-phrasing.py` through embedded CPython passes over all
+218,071 enumerated outlines, 173,785 of them answered. That is the same corpus
+the Rust port was validated against, so Python demonstrably covers what the port
+covered. What is still unconfirmed is the GUI path (ticking the dictionary on and
+writing with it), which needs her hands.
+
+The fixture moved to `crates/pluvialis-python/tests/` because it now proves the
+Python reader rather than the port. It stays at 6.8 MB: it is the only evidence
+that the whole calling convention (tuple packing, return extraction, `KeyError`
+meaning "no entry") is right, and regenerating it needs her Python file.
+
+### Python dictionaries are screened before they are executed
+
+**Found while removing the port, and it was writing to her files.**
+
+`PythonDictionary::load` ran the module body and only then checked for a `lookup`
+function, and the app discovers dictionaries by scanning her Plover folder. Three
+`.py` files live there and one is a dictionary. `backupcoriendict.py` copies
+`cb_dictionary.json` to `F:\Steno` from module level, so every GUI start ran that
+copy. Nothing was corrupted, and the script does only what its name says, but the
+app had no business running it.
+
+The root cause is the discovery model, not the check. Plover runs the `.py` files
+its config names; scanning a folder is friendlier and means meeting files that
+were never meant to be dictionaries. The check now reads the source for a
+`lookup` definition before executing anything.
+
+**This is not a sandbox and must not be described as one.** Anything that passes
+the screen is still arbitrary code with full access to the machine, exactly as in
+Plover. It only stops the app running files nobody asked it to run.
+
+### RTF/CRE is read, not converted
+
+Written against Plover's `rtfcre_parse.py` as a specification, independently
+implemented. Returns `Vec<(outline, translation)>` with translations already in
+the meta syntax `format.rs` understands, so an imported RTF behaves like any
+other dictionary.
+
+Two deliberate differences from Plover, both recorded in the module:
+
+- A literal brace is emitted escaped (`\{`), because `format.rs` would otherwise
+  read it as the start of a meta command. Plover has the same hazard and does not
+  guard against it.
+- Plover's stylesheet branch appends whatever text was left over from a previous
+  loop iteration, because it never assigns its own local. That is a bug whose
+  output happens to be discarded downstream. Not replicated.
+
+**Untested against a real commercial dictionary.** There is no `.rtf` anywhere on
+`F:\Steno` to try, so every input is hand-constructed from the shapes in Plover's
+reader and writer. The first real file may still surprise it. Ten of the tests
+are written separately from the module's own, on the principle that a suite
+written alongside the code shares its blind spots; one of those ten was wrong
+about `\cxds \cxds` and the parser was right, checked against `rtfcre_parse.py`.
+
+**Two integration decisions are still open**, both deferred until the dictionary
+copying question is settled:
+
+- `format.rs` does not understand `=undo` or `=macro_name` translations, which
+  `\cxdstroke` and `\cxplovermacro` produce. `parse_atoms` sees no braces, so
+  they would be typed out as literal text.
+- Outlines come back as raw strings. Whoever builds a `Dictionary` from them
+  must decide whether unparseable keys go to `bad_keys`, as `Dictionary::load`
+  does for JSON.
