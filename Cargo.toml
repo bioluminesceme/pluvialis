@@ -4,6 +4,7 @@ members = [
     "crates/pluvialis-core",
     "crates/pluvialis-script",
     "crates/pluvialis-machine",
+    "crates/pluvialis-python",
     "crates/pluvialis-output",
     "crates/pluvialis-app",
 ]
