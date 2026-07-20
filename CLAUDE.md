@@ -12,9 +12,11 @@ Named after *Pluvialis*, the golden-plover genus (Latin *pluvia*, rain). Checked
 
 ## Status
 
-**M0 through M4a are done and verified on real hardware. M4b (Stenograph USB, the Luminex) is next**; `PLAN.md` has a measured facts block for it.
+**M0 through M4a are done and verified on real hardware. M4b (Stenograph USB, the Luminex) is code complete and connects to the real writer**; one step remains, listed in `PLAN.md`: confirm strokes arrive while someone writes on it, plus the writer-off soak test.
 
-The Peregrine writes into Pluvialis over Gemini PR, connecting on launch with no dialog and no machine selection, with both writers attached. 100 tests, clippy clean at `-D warnings`.
+The Peregrine writes into Pluvialis over Gemini PR, and the Luminex connects at 0.0s and is preferred over the Peregrine when both are attached. Neither needs a dialog or a machine selection. 117 tests, clippy clean at `-D warnings`.
+
+**Do not trust this project's own reference documents over the machine.** Three M4b facts recorded in `reference/STENOGRAPH-PROTOCOL.md` and `thingstonote.md` turned out to be wrong (the device interface GUID, `cbSize`, and an unnoticed fourth Plover bug), each found by checking against the registry, `ctypes.sizeof`, or the source rather than trusting the note. All three are now corrected, and all three would have presented as "the writer is not plugged in".
 
 **The Luminex is the user's primary machine**, so M4b comes before M5 even though M5 (typing at the caret) is the more visible feature. Its driver is already installed and bound, which removes the biggest unknown from M4b and M8.
 
@@ -24,6 +26,7 @@ Working commands (`target\release\pluvialis-app.exe <cmd>`):
 - `lookup <OUTLINE>...` — answer from the real dictionaries, with timings
 - `check [DICT...]` — format every entry, report unimplemented meta commands. Exits 0 on the known baseline, non zero on anything new, so it is a regression test.
 - `clean [--write] [DICT...]` — remove entries whose keys are not valid steno. Dry run unless `--write`.
+- `machine [SECONDS]` — run the Auto scanner and print every status change and stroke. The machine layer is otherwise only visible through the GUI, which makes a connection problem hard to see and impossible to paste anywhere. `RUST_LOG=pluvialis_machine=trace` adds per-attempt detail.
 - no arguments — opens the GUI
 
 Run tests with `cargo test --workspace`, lint with `cargo clippy --workspace --all-targets -- -D warnings`. Both must be clean before a milestone is done.

@@ -242,9 +242,19 @@ The `Machine` trait (connect, stroke stream, status), the keymap layer, the Auto
 - **`cbSize` is 8 on x64, not 5** as `thingstonote.md` claimed. Measured with `ctypes.sizeof` on Plover's own struct.
 - **A fourth Plover bug**, likely the one that actually bites: an ERROR response cannot pass its sequence-and-type gate, so error code 8 ("not writing yet") raises an uncaught `ProtocolViolationException` that kills the reader thread. See section 5 of the protocol reference.
 
-**Still to verify (needs the writer powered on):** that it connects, that strokes arrive and translate, and the soak test below.
+**Verified against the real Luminex, 2026-07-20, with both writers attached and idle** (`pluvialis machine 60`):
 
-**Soak test, without the machine:** run with no writer attached for ten minutes. Status stays "Searching", one connect attempt per second, CPU near idle, and **handle count flat** in Task Manager. A rising handle count means Plover's `disconnect()` bug was reproduced.
+- **Connects instantly**, at 0.0s, reporting `Stenograph USB on VID_112B&PID_000D&MI_00`. The corrected GUID, `cbSize` and `CreateFile` disposition are all right.
+- **Auto mode picks the Luminex over the Peregrine**, which is M8 checklist item 5, done early because both happened to be attached.
+- **Error code 8 arrives about ten times a second while the writer is idle** and is absorbed as routine. This is the exact packet that bug 4 says kills Plover's reader thread, so the failure mode is not hypothetical: it is the writer's normal resting state.
+- **Handle count flat at 152 over 45 seconds**, threads flat at 2, memory flat at 12.9 MB, 0.06s CPU total (about 0.13%). This is the handle-leak proof for the connected path. Clean shutdown, exit 0.
+
+**Still to verify, needs a person at the machine:**
+
+1. **Strokes.** Write on the Luminex and confirm outlines appear and translate. This is the last step of M4b and the only one that needs hands.
+2. **Soak test with the writer off.** Ten minutes with nothing attached: status stays "Searching", one attempt per second, handle count flat. Proves the leak is absent on the *searching* path too, which the test above could not cover because the writer was on.
+
+Use `pluvialis-app.exe machine [SECONDS]` for both. `RUST_LOG=pluvialis_machine=trace` shows every attempt.
 
 ### M5. Output routing, dictionary tools, tray
 `SendInput` keystroke emulation for when another window has focus. Focus-based routing. Tray icon with an output on/off toggle. Dictionary pane (list with priority order, drag to reorder, enable/disable checkboxes), lookup window, and an entry editor that writes back to the JSON files.

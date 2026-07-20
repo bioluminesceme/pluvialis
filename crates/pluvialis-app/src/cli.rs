@@ -25,6 +25,7 @@ pub fn run(args: &[String]) -> std::process::ExitCode {
         Some("lookup") => lookup(&args[1..]),
         Some("clean") => clean(&args[1..]),
         Some("check") => check(&args[1..]),
+        Some("machine") => machine(&args[1..]),
         Some(other) => {
             eprintln!("unknown command {other:?}");
             usage();
@@ -39,6 +40,62 @@ fn usage() {
     eprintln!("  pluvialis lookup <OUTLINE> [OUTLINE...]");
     eprintln!("  pluvialis clean [--write] [DICTIONARY...]");
     eprintln!("  pluvialis check [DICTIONARY...]");
+    eprintln!("  pluvialis machine [SECONDS]");
+}
+
+/// Watch the Auto scanner and print everything it reports.
+///
+/// The machine layer is otherwise only observable through the GUI, which makes
+/// a connection problem hard to see and impossible to paste into a bug report.
+/// This runs the same scanner the app runs, so what it shows is what the app
+/// would do. `RUST_LOG=trace` adds the per-attempt detail.
+fn machine(args: &[String]) -> std::process::ExitCode {
+    let seconds: u64 = args
+        .first()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(20);
+
+    println!("Watching for steno machines for {seconds}s. Write on the machine to see strokes.\n");
+
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let _scanner = pluvialis_machine::Scanner::spawn(pluvialis_machine::all_machines(), tx);
+
+    let started = Instant::now();
+    let deadline = std::time::Duration::from_secs(seconds);
+    let mut strokes = 0usize;
+
+    while started.elapsed() < deadline {
+        let left = deadline.saturating_sub(started.elapsed());
+        match rx.recv_timeout(left.min(std::time::Duration::from_millis(250))) {
+            Ok(pluvialis_machine::MachineEvent::Status(status)) => {
+                let elapsed = started.elapsed().as_secs_f32();
+                match status {
+                    pluvialis_machine::MachineStatus::Searching => {
+                        println!("[{elapsed:5.1}s] searching");
+                    }
+                    pluvialis_machine::MachineStatus::Connected { machine, port } => {
+                        println!("[{elapsed:5.1}s] CONNECTED  {machine} on {port}");
+                    }
+                    pluvialis_machine::MachineStatus::Disconnected { reason } => {
+                        println!("[{elapsed:5.1}s] disconnected: {reason}");
+                    }
+                }
+            }
+            Ok(pluvialis_machine::MachineEvent::Stroke(stroke)) => {
+                strokes += 1;
+                let elapsed = started.elapsed().as_secs_f32();
+                println!(
+                    "[{elapsed:5.1}s] stroke     {}",
+                    Stroke::render_outline(&[stroke])
+                );
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    println!("\n{strokes} strokes in {seconds}s.");
+    std::process::ExitCode::SUCCESS
 }
 
 /// Format every entry and report meta commands the formatter does not
