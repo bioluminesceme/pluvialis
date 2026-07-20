@@ -15,9 +15,9 @@ use pluvialis_core::{Dictionary, DictionaryStack, Stroke, Translation, Translato
 /// working Plover install and are never copied or modified.
 pub(crate) const DICTIONARY_DIR: &str = r"C:\Users\Corien\AppData\Local\plover\plover";
 
-/// Priority order, highest first, mirroring her plover.cfg. `jeff-phrasing.py`
-/// is a Python programmatic dictionary and is not loadable here; it is
-/// replaced by a native implementation in M6.
+/// Priority order, highest first, mirroring her plover.cfg. Only the JSON ones
+/// are listed here. `jeff-phrasing.py` and any other Python dictionary in the
+/// same directory are discovered separately by the GUI and loaded disabled.
 pub(crate) const DICTIONARIES: [&str; 2] = ["cb_dictionary_full.json", "corien-dutch.json"];
 
 pub fn run(args: &[String]) -> std::process::ExitCode {

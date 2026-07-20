@@ -49,6 +49,38 @@ pub enum PythonError {
     NoLookup { path: PathBuf },
 }
 
+/// Does this source define `lookup` at all?
+///
+/// Checked **before** the module is executed, and that ordering is the whole
+/// point. Plover only ever runs a `.py` that its config names as a dictionary;
+/// Pluvialis finds them by scanning the dictionary folder, which is friendlier
+/// but means it meets files that were never meant to be dictionaries. The
+/// user's folder holds two: `backupcoriendict.py` copies a dictionary to
+/// another drive from module level, and `merge_dictionaries.py` rewrites one.
+/// Executing first and asking questions afterwards would run the copy on every
+/// start.
+///
+/// This is not a sandbox and is not trying to be. Anything that passes is still
+/// arbitrary code, exactly as in Plover. It only keeps the app from running
+/// files nobody asked it to run.
+fn defines_lookup(source: &str) -> bool {
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("def lookup(")
+            || line.starts_with("def lookup (")
+            || line.starts_with("lookup =")
+            || line.starts_with("lookup=")
+            // `from module import lookup`, and the aliased form.
+            || (line.starts_with("from ") && line.contains(" import ") && {
+                let imports = line.split(" import ").nth(1).unwrap_or("");
+                imports
+                    .split(',')
+                    .any(|name| name.trim().trim_end_matches(')') == "lookup"
+                        || name.trim().ends_with(" as lookup"))
+            })
+    })
+}
+
 /// A loaded Plover Python dictionary.
 pub struct PythonDictionary {
     /// The module's namespace, holding `lookup` and friends. Kept alive for the
@@ -74,6 +106,11 @@ impl PythonDictionary {
             path: path.clone(),
             source,
         })?;
+
+        // Before running anything. See `defines_lookup`.
+        if !defines_lookup(&source) {
+            return Err(PythonError::NoLookup { path });
+        }
 
         Python::attach(|py| {
             let namespace = PyDict::new(py);
@@ -212,6 +249,47 @@ impl ProgrammaticDictionary for PythonDictionary {
 
     fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+}
+
+#[cfg(test)]
+mod screening {
+    use super::*;
+
+    #[test]
+    fn it_accepts_the_shapes_a_dictionary_uses() {
+        assert!(defines_lookup("def lookup(key):\n    raise KeyError(key)\n"));
+        assert!(defines_lookup("lookup = _make_lookup()\n"));
+        assert!(defines_lookup("from tables import lookup\n"));
+        assert!(defines_lookup("from tables import phrase as lookup\n"));
+        assert!(defines_lookup("if fast:\n    def lookup(key):\n        pass\n"));
+    }
+
+    /// A script that merely mentions dictionaries is not one.
+    #[test]
+    fn it_refuses_a_script_with_no_lookup() {
+        assert!(!defines_lookup(
+            "import shutil\nshutil.copy2(source, destination)\n"
+        ));
+        assert!(!defines_lookup("# a lookup would go here\n"));
+        assert!(!defines_lookup("result = do_lookup(key)\n"));
+    }
+
+    /// The two real files in the user's dictionary folder that are scripts
+    /// rather than dictionaries. `backupcoriendict.py` copies a dictionary to
+    /// another drive from module level, so executing it to find out what it is
+    /// would have done that on every start.
+    #[test]
+    #[ignore = "depends on files outside the repository"]
+    fn it_refuses_the_scripts_in_the_users_dictionary_folder() {
+        let folder = Path::new(r"C:\Users\Corien\AppData\Local\plover\plover");
+        for name in ["backupcoriendict.py", "merge_dictionaries.py"] {
+            let source = std::fs::read_to_string(folder.join(name)).expect("reading the script");
+            assert!(!defines_lookup(&source), "{name} must not be executed");
+        }
+        let phrasing =
+            std::fs::read_to_string(folder.join("jeff-phrasing.py")).expect("reading the phrasing");
+        assert!(defines_lookup(&phrasing));
     }
 }
 
@@ -363,8 +441,6 @@ mod real_dictionary {
 
     fn fixture_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("pluvialis-core")
             .join("tests")
             .join("phrasing_fixture.json")
     }

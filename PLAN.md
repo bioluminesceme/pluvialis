@@ -17,7 +17,7 @@ Rather than patch Plover, we build a separate program, **Pluvialis**, in Rust. I
 - Connects to the Stenograph USB writer with a scan loop that retries forever and never needs a dialog, so it just works whenever the machine is on. (This started as "hardcode the machine"; it became an Auto scanner once we decided to support more protocols, which solves the same pain better.)
 - Live-type window as the main screen: big text area, steno tape strip on the right, untranslated strokes shown in red as raw steno.
 - Multiple JSON dictionaries with priority order and enable/disable, plus dictionary edit and lookup.
-- Lua for programmatic ("scripty") dictionaries, so things like jeff-phrasing have a future.
+- Plover's own Python dictionaries run as written, so things like jeff-phrasing work unmodified. (This was originally planned as a Lua host; superseded, see M6.)
 - Markdown documents with autosave, versioned history, and crash recovery.
 - Single .exe, no venv, no Python.
 - Eventually every protocol Plover supports, so this can be released publicly. Build order follows what you actually use.
@@ -48,7 +48,7 @@ Cargo workspace at `F:\Steno\Pluvialis`, five crates so the machine-specific and
 | Crate | Responsibility | Platform |
 |---|---|---|
 | `pluvialis-core` | `Stroke`, keymap layer, dictionary loading and lookup, translator, formatter/meta commands, undo history | portable |
-| `pluvialis-script` | Lua dictionary host (`mlua`) | portable |
+| `pluvialis-python` | Plover Python dictionary host (embedded CPython via PyO3) | portable, needs a CPython install |
 | `pluvialis-machine` | `Machine` trait plus every protocol: Stenograph USB, Gemini PR, TX Bolt, ProCAT, Passport, Plover HID, Stentura, keyboard | serial and HID are portable; Stenograph USB and the keyboard hook are Windows-specific behind `cfg` |
 | `pluvialis-output` | Keystroke emulation into other apps (Win32 `SendInput`) | Windows now |
 | `pluvialis-app` | egui/eframe GUI, documents, autosave, versioning, config | portable |
@@ -104,9 +104,8 @@ Plover's own HID implementation already works this way (a device scan loop with 
 - **Lua is the scripty layer.** A `.lua` dictionary in the list exposes `lookup(strokes) -> string | nil` and optionally `reverse_lookup(text)`. It is called only when the JSON dictionaries above it miss, so the cost is near zero in normal writing.
 - **Conversion tools** ship as subcommands of the same exe, since you asked for them built in:
   - `pluvialis convert rtf <in.rtf> <out.json>` (RTF/CRE, the format most commercial dictionaries come in)
-  - `pluvialis convert json-to-lua <in.json> <out.lua>` (for when you want to make a static dictionary programmatic)
   - `pluvialis check <dict>` (report entries using meta commands we do not implement, so nothing fails silently)
-- **jeff-phrasing** gets a native Rust port (Milestone 6). It is 811 lines but mostly lookup tables (`STARTERS`, `MIDDLES`, `STRUCTURES`, `ENDERS` and friends) driven by one regex-based `determine_parts`. The port is validated by differential testing: a throwaway Python script enumerates every stroke the original responds to, and a Rust test asserts identical output for all of them. That is the only honest way to know a port is correct, and it is cheap here because `LONGEST_KEY = 1` bounds the space.
+- **jeff-phrasing needs no port.** It runs as the Python file it already is. A native Rust port was built and then removed on 2026-07-20: measurement showed Python answers in microseconds, so the port bought nothing and cost a rewrite per dictionary. See M6.
 
 ## Documents
 
@@ -128,7 +127,7 @@ One deviation from the plan as written, recorded in `thingstonote.md`:
 
 Everything is on latest published versions: rustc 1.97.1, eframe and egui 0.35.0. eframe uses default features, including the `wgpu` renderer. A `wgpu-hal` compile failure seen once during M0 did not reproduce and is noted as transient.
 
-Remaining dependencies get added in the milestone that needs them, rather than up front: `serde`/`serde_json` (M1), `crossbeam-channel` and `serialport` (M4a), `windows` (M4b), `mlua` (M6).
+Remaining dependencies get added in the milestone that needs them, rather than up front: `serde`/`serde_json` (M1), `crossbeam-channel` and `serialport` (M4a), `windows` (M4b), `pyo3` (M6).
 
 ### ~~M1. Core: strokes, dictionaries, translation~~ DONE
 `crates/pluvialis-core/src/{stroke,dictionary,translator}.rs`, 26 tests, clippy clean.
@@ -142,7 +141,8 @@ Two findings, both in `thingstonote.md`:
 - **433 keys in `corien-dutch.json` are not valid steno** (doubled `U`, `*` after `-E`/`-U`). Plover's own `plover-stroke` rejects them identically, so this is broken data, not a parser bug. They are skipped and reported.
 - Our parser was checked against `plover-stroke` 1.1.0 and agreed on every case tried.
 
-`jeff-phrasing.py` is not loadable by the CLI (it is Python); the native port is M6.
+`jeff-phrasing.py` is not loadable by the `lookup` CLI subcommand, which reads
+only the JSON files. The GUI loads Python dictionaries; see M6.
 
 ### ~~M2. Formatter: spaces, capitalization, meta commands~~ DONE
 `crates/pluvialis-core/src/{format,orthography,orthography_rules}.rs`, 58 tests, clippy clean.
@@ -283,9 +283,12 @@ dictionaries. What actually happened:
 
 - The jeff-phrasing port was built and checked against the Python over 218,071
   outlines. The user then stopped it: "Don't make the Jeff's phrasing native
-  please, I'm not sure I'll use it yet." The code is in the tree but **not
-  loaded**, and there is a comment where it would be loaded saying not to add it
-  back without asking.
+  please, I'm not sure I'll use it yet." It was left unloaded, then **removed on
+  2026-07-20** once the Python path was validated over the same 218,071
+  outlines. `phrasing.rs` and `phrasing_dictionary.rs` are in the Recycle Bin,
+  and in git history at `eecd203~`, if the decision is ever revisited. Do not
+  rebuild it without asking: the reason it went is that it duplicated a file
+  that already works.
 - She asked instead that **any** Python dictionary be importable and
   enable/disable-able. Measurement settled how: `jeff-phrasing.py` answers in
   2.2us and misses in 1.2us, against 0.4us to 6.5us for our own Rust JSON
@@ -300,17 +303,15 @@ dictionaries. What actually happened:
 
 **Still open in M6:**
 
-- Does the Lua host still earn its place? It was built before Python was known
-  to run at full speed. Its only remaining advantage is sandboxing. Raised with
-  the user, unanswered.
-- `convert rtf` was never built. Still a genuine gap for importing commercial
-  dictionaries. `convert json-to-lua` is now pointless and should be dropped.
+- `convert rtf` is being built now. Still a genuine gap for importing commercial
+  dictionaries. `convert json-to-lua` is dropped with the Lua host.
 - Programmatic dictionaries are consulted **after** all JSON ones rather than
   interleaved by priority. Safe default (can only add behaviour, never shadow an
   existing outline), but real interleaving is a feature.
 
-`mlua` host with the `lookup`/`reverse_lookup` contract and a sandbox (no filesystem or network from dictionary scripts). The `convert` and `check` subcommands. Native Rust jeff-phrasing with the differential test against the Python original.
-**Verify:** a toy Lua dictionary resolves strokes the JSON files miss; the jeff-phrasing differential test passes for every enumerated stroke; phrasing strokes work in the live view.
+**Verify:** a Python dictionary resolves strokes the JSON files miss, only once
+ticked on; the differential test against the real `jeff-phrasing.py` passes for
+all 218,071 enumerated outlines; phrasing strokes work in the live view.
 
 ### M7. Documents, autosave, versioning, crash recovery. DONE 2026-07-20
 Markdown save/open, autosave interval, snapshot history with retention, history browser and restore, crash recovery prompt.
@@ -364,7 +365,10 @@ Release chores whenever you decide to publish: LICENSE (GPL-3.0 is the natural f
 - `F:\Steno\plover\plover\machine\gemini_pr.py` — protocol spec for M4a; `keymap.py` and `base.py` for the keymap layer
 - `F:\Steno\plover\plover\machine\` — `tx_bolt.py`, `procat.py`, `passport.py`, `plover_hid.py`, `stentura.py`, `keyboard.py` for the post-1.0 list
 - `F:\Steno\plover\plover\formatting.py`, `plover\translation.py`, `plover\steno.py` — reference semantics for M1 and M2
-- `F:\Steno\jeff-phrasing.py` — source for the M6 port
+- `F:\Steno\jeff-phrasing.py` (note: this is the *user's* copy at
+  `C:\Users\Corien\AppData\Local\plover\plover\` in normal use) is loaded and
+  run directly, not ported. It doubles as the fixture for the M6 differential
+  test.
 
 **To create:** everything under `F:\Steno\Pluvialis\`.
 
