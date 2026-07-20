@@ -83,6 +83,14 @@ pub struct LiveView {
     /// Words written and how fast, for the status bar.
     meter: crate::meter::Meter,
 
+    /// The word count, and the document revision it was counted at.
+    ///
+    /// The status bar draws every frame and counting words is linear in the
+    /// document: 204us at 45,000 words, which is 1.2% of a core at 60 fps and
+    /// grows as the day goes on. Comparing the revision instead costs nothing,
+    /// so the count is paid once per edit.
+    words: (u64, usize),
+
     /// The document's caret has moved for a reason the text widget does not
     /// know about, so the widget's own cursor must be told rather than asked.
     ///
@@ -156,6 +164,7 @@ impl LiveView {
             translator: Translator::new(),
             document: Document::new(),
             meter: crate::meter::Meter::new(),
+            words: (0, 0),
             push_caret: false,
             shadow: Formatted::default(),
             layout: None,
@@ -775,10 +784,18 @@ impl LiveView {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
-        // Sampled here rather than on each stroke, so hand editing counts too
-        // and a pause is visible as the rate decaying rather than freezing.
-        let words = crate::meter::count_words(self.document.text());
-        self.meter.observe(ui.input(|i| i.time), words);
+        // Counted only when the text has actually changed, but *sampled* every
+        // frame regardless: the meter needs to see time passing to know that
+        // writing has stopped.
+        let revision = self.document.revision();
+        if revision != self.words.0 {
+            self.words = (revision, crate::meter::count_words(self.document.text()));
+        }
+        let words = self.words.1;
+
+        let now = ui.input(|i| i.time);
+        self.meter.observe(now, words);
+        let idle = self.meter.is_idle(now);
 
         ui.add_space(2.0);
         ui.horizontal(|ui| {
@@ -847,10 +864,20 @@ impl LiveView {
                     // writing to divide by. A confident zero is a worse answer
                     // than no answer.
                     None => ui.label(""),
-                    Some(rate) => ui.label(format!("{rate} wpm")).on_hover_text(
-                        "Real words per minute over the last minute, the way \
-                         dictation speeds are quoted. Falls as you pause.",
-                    ),
+                    Some(rate) => {
+                        // Dimmed while not writing, because the figure is held
+                        // rather than live: pauses are excluded from it, so
+                        // without this it would look like a current reading.
+                        let text = egui::RichText::new(format!("{rate} wpm"));
+                        ui.label(if idle { text.weak() } else { text })
+                            .on_hover_text(
+                                "Real words per minute while you are writing, the way \
+                                 dictation speeds are quoted.\n\nPauses are excluded, so \
+                                 thinking does not count against you. Dimmed when you \
+                                 have stopped, since the figure is then the last one \
+                                 measured rather than a live reading.",
+                            )
+                    }
                 };
                 ui.separator();
                 ui.label(format!("{words} words"))

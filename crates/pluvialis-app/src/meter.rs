@@ -1,20 +1,39 @@
 //! Words written, and how fast.
 //!
-//! **Words are real words**, whitespace separated, not the five-characters-is-a-word
-//! convention that typing tests use. Steno dictation speeds are quoted in real
-//! words (a court reporting certification at 225 wpm means 225 actual words), so
-//! counting the other way would show the user a number that does not compare to
-//! any figure she cares about.
+//! **Words are real words**, whitespace separated, not the
+//! five-characters-is-a-word convention that typing tests use. Steno dictation
+//! speeds are quoted in real words (a court reporting certification at 225 wpm
+//! means 225 actual words), so counting the other way would show a number that
+//! compares to nothing the user cares about.
 //!
-//! The rate is measured over a rolling window rather than the whole session, so
-//! it shows current speed and decays when writing stops. A session average would
-//! be permanently dragged down by every interruption.
+//! ## Why the rate is not simply "words in the last minute"
+//!
+//! A plain rolling average answers "how much did you write recently", which
+//! decays to zero the moment you stop and punishes you for thinking. What a
+//! writer actually wants to know is **how fast they write when they are
+//! writing**, which is also what a dictation speed means.
+//!
+//! So idle time is excluded. Only intervals in which words appeared count
+//! toward elapsed time, and each is capped at [`IDLE_SECONDS`] so a long pause
+//! before a word does not inflate the denominator. At any steno pace the gap
+//! between words is a fraction of a second, far below the cap, so the cap only
+//! ever bites during a genuine pause.
+//!
+//! The number therefore holds steady while you think rather than collapsing.
+//! Because a held number could be mistaken for a live one, [`Meter::is_idle`]
+//! reports when writing has stopped and the status bar dims it.
 
 use std::collections::VecDeque;
 
-/// How far back the rate looks. Long enough that a pause to think does not
-/// read as zero, short enough to reflect the last minute rather than the hour.
+/// How far back the rate looks.
 const WINDOW_SECONDS: f64 = 60.0;
+
+/// A gap longer than this is thinking, not writing.
+///
+/// Three seconds is above any real inter-word gap: even 20 wpm is a word every
+/// three seconds, and steno runs an order of magnitude faster. It is also short
+/// enough that a pause is excluded promptly.
+const IDLE_SECONDS: f64 = 3.0;
 
 /// Samples closer together than this are not worth keeping. At 60 fps an
 /// unthrottled sample per frame would be 3,600 entries a minute, all of them
@@ -25,6 +44,8 @@ const MIN_SAMPLE_GAP: f64 = 0.25;
 pub struct Meter {
     /// `(seconds, cumulative words)`, oldest first.
     samples: VecDeque<(f64, usize)>,
+    /// When the word count last went up.
+    last_wrote: Option<f64>,
 }
 
 impl Meter {
@@ -34,13 +55,19 @@ impl Meter {
 
     /// Record the document's word count at a moment in time.
     ///
-    /// `now` is egui's frame time, which is monotonic seconds since start.
+    /// `now` is egui's frame time: monotonic seconds since the program started.
     pub fn observe(&mut self, now: f64, words: usize) {
+        if let Some(&(_, previous)) = self.samples.back()
+            && words > previous
+        {
+            self.last_wrote = Some(now);
+        }
+
         match self.samples.back() {
             // Nothing changed and no time worth recording has passed.
             Some(&(when, count)) if count == words && now - when < MIN_SAMPLE_GAP => {}
             Some(&(when, _)) if now - when < MIN_SAMPLE_GAP => {
-                // Word count moved within the throttle window. Replace rather
+                // The count moved within the throttle window. Replace rather
                 // than drop, so a fast burst is not undercounted.
                 self.samples.pop_back();
                 self.samples.push_back((now, words));
@@ -57,25 +84,40 @@ impl Meter {
         }
     }
 
-    /// Words per minute across the window, or `None` before there is enough to
+    /// Has writing stopped? Callers use this to show the rate as stale rather
+    /// than current.
+    pub fn is_idle(&self, now: f64) -> bool {
+        match self.last_wrote {
+            None => true,
+            Some(when) => now - when > IDLE_SECONDS,
+        }
+    }
+
+    /// Words per minute while writing, or `None` before there is enough to
     /// divide by.
     ///
-    /// Returns `None` rather than zero when the window is too short to mean
-    /// anything: a confident "0 wpm" a tenth of a second after starting is a
-    /// worse answer than no answer.
+    /// `None` rather than zero when the window is too short to mean anything: a
+    /// confident "0 wpm" a tenth of a second after starting is a worse answer
+    /// than no answer.
     pub fn words_per_minute(&self) -> Option<u32> {
-        let (first, first_words) = *self.samples.front()?;
-        let (last, last_words) = *self.samples.back()?;
+        let mut writing = 0.0f64;
+        let mut written = 0usize;
 
-        let elapsed = last - first;
-        if elapsed < 1.0 {
-            return None;
+        for (&(before, was), &(after, is)) in self.samples.iter().zip(self.samples.iter().skip(1)) {
+            // Deleting must not produce a negative rate, and an interval with
+            // no new words is not writing, so it contributes no time.
+            let added = is.saturating_sub(was);
+            if added == 0 {
+                continue;
+            }
+            writing += (after - before).min(IDLE_SECONDS);
+            written += added;
         }
 
-        // Deleting a paragraph must not produce a negative rate, and clearing
-        // the document must not produce a huge one when text comes back.
-        let written = last_words.saturating_sub(first_words);
-        Some((written as f64 * 60.0 / elapsed).round() as u32)
+        if writing < 1.0 {
+            return None;
+        }
+        Some((written as f64 * 60.0 / writing).round() as u32)
     }
 }
 
@@ -108,41 +150,92 @@ mod tests {
         meter.observe(0.0, 0);
         assert_eq!(meter.words_per_minute(), None);
         meter.observe(0.5, 5);
-        assert_eq!(meter.words_per_minute(), None, "half a second proves nothing");
+        assert_eq!(
+            meter.words_per_minute(),
+            None,
+            "half a second proves nothing"
+        );
     }
 
+    /// Writing steadily, sampled the way the UI samples it.
     #[test]
     fn a_steady_pace_reads_as_that_pace() {
         let mut meter = Meter::new();
-        // 60 words over 60 seconds, sampled once a second.
-        for second in 0..=60 {
-            meter.observe(second as f64, second as usize);
+        let mut now = 0.0;
+        // 120 wpm is a word every half second.
+        for word in 0..=120 {
+            meter.observe(now, word);
+            now += 0.5;
         }
-        assert_eq!(meter.words_per_minute(), Some(60));
+        assert_eq!(meter.words_per_minute(), Some(120));
+    }
+
+    /// The point of the whole design: thinking must not read as slow writing.
+    #[test]
+    fn a_pause_to_think_does_not_lower_the_rate() {
+        let mut meter = Meter::new();
+        let mut now = 0.0;
+        let mut words = 0;
+
+        // Twenty words at 120 wpm.
+        for _ in 0..20 {
+            words += 1;
+            meter.observe(now, words);
+            now += 0.5;
+        }
+        let before = meter.words_per_minute().expect("a rate");
+
+        // Fifteen seconds of staring out of the window, sampled all the while.
+        for _ in 0..60 {
+            now += 0.25;
+            meter.observe(now, words);
+        }
+        let after = meter.words_per_minute().expect("a rate");
+
+        assert_eq!(
+            before, after,
+            "the pause changed the rate from {before} to {after}"
+        );
+        assert!(meter.is_idle(now), "not writing, so it should read as idle");
     }
 
     #[test]
-    fn a_realistic_steno_pace_is_reported_as_written() {
+    fn writing_again_after_a_pause_stops_reading_as_idle() {
         let mut meter = Meter::new();
-        // 200 wpm for thirty seconds is 100 words.
         meter.observe(0.0, 0);
-        meter.observe(30.0, 100);
-        assert_eq!(meter.words_per_minute(), Some(200));
+        meter.observe(10.0, 1);
+        assert!(!meter.is_idle(10.0));
+        assert!(meter.is_idle(20.0));
+        meter.observe(20.5, 2);
+        assert!(!meter.is_idle(20.5));
     }
 
-    /// Old samples must leave, or the rate becomes a session average by
-    /// stealth and never recovers from a pause.
+    #[test]
+    fn nothing_written_yet_reads_as_idle() {
+        let meter = Meter::new();
+        assert!(meter.is_idle(0.0));
+    }
+
+    /// Old samples must leave, or the rate becomes a session average by stealth.
     #[test]
     fn writing_long_ago_stops_counting() {
         let mut meter = Meter::new();
-        meter.observe(0.0, 0);
-        meter.observe(10.0, 100); // a fast burst
-        // Two minutes later, writing slowly.
-        for second in 130..=160 {
-            meter.observe(second as f64, 100 + (second - 130));
+        let mut now = 0.0;
+
+        // A fast burst: 40 words at 240 wpm.
+        for word in 1..=40 {
+            now += 0.25;
+            meter.observe(now, word);
         }
+        // Two minutes later, writing at a gentler pace.
+        now += 120.0;
+        for word in 41..=80 {
+            now += 1.0;
+            meter.observe(now, word);
+        }
+
         let rate = meter.words_per_minute().expect("a rate");
-        assert!(rate < 100, "the old burst is still counted: {rate}");
+        assert_eq!(rate, 60, "the old burst is still being counted");
     }
 
     /// Deleting text must not produce a negative or nonsensical rate.
@@ -150,8 +243,32 @@ mod tests {
     fn deleting_a_paragraph_does_not_go_negative() {
         let mut meter = Meter::new();
         meter.observe(0.0, 500);
-        meter.observe(30.0, 20);
-        assert_eq!(meter.words_per_minute(), Some(0));
+        meter.observe(1.0, 400);
+        meter.observe(2.0, 300);
+        // No interval added words, so there is nothing to divide.
+        assert_eq!(meter.words_per_minute(), None);
+    }
+
+    /// Deleting mid session must not corrupt the rate of what follows.
+    #[test]
+    fn a_deletion_does_not_distort_later_writing() {
+        let mut meter = Meter::new();
+        let mut now = 0.0;
+
+        for word in 1..=20 {
+            now += 0.5;
+            meter.observe(now, word);
+        }
+        // Delete half of it.
+        now += 0.5;
+        meter.observe(now, 10);
+        // Carry on at the same pace.
+        for word in 11..=30 {
+            now += 0.5;
+            meter.observe(now, word);
+        }
+
+        assert_eq!(meter.words_per_minute(), Some(120));
     }
 
     /// At 60 fps this is called every frame. It must not grow without bound.
@@ -168,5 +285,40 @@ mod tests {
             "kept {} samples",
             meter.samples.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod cost {
+    use super::*;
+
+    /// What counting words every frame would cost if it were not cached, on a
+    /// document far longer than a day's writing.
+    ///
+    /// This is why `Document::revision` exists: the status bar recounts only
+    /// when the text changes, so the figure below is paid per edit rather than
+    /// sixty times a second.
+    #[test]
+    #[ignore = "measurement, not a pass/fail test"]
+    fn counting_words_is_measured_rather_than_assumed() {
+        // 45,000 words, roughly a 90 page transcript.
+        let text = "the quick brown fox jumps over a lazy dog ".repeat(5_000);
+        let words = count_words(&text);
+
+        let started = std::time::Instant::now();
+        let rounds = 200;
+        let mut total = 0usize;
+        for _ in 0..rounds {
+            total += count_words(&text);
+        }
+        let each = started.elapsed() / rounds;
+
+        println!("{words} words, {} bytes", text.len());
+        println!("one count: {each:?}");
+        println!(
+            "if it ran every frame at 60 fps: {:.2}% of one core",
+            each.as_secs_f64() * 60.0 * 100.0
+        );
+        assert_eq!(total, words * rounds as usize);
     }
 }

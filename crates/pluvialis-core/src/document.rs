@@ -116,11 +116,23 @@ pub struct Document {
     /// Sorted, non-overlapping byte ranges of untranslated steno.
     raw_ranges: Vec<(usize, usize)>,
     caret: usize,
+    revision: u64,
 }
 
 impl Document {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Increments whenever the text changes, and never otherwise.
+    ///
+    /// For callers that derive something expensive from the text and are called
+    /// every frame. Counting words on a 45,000 word document takes 204us, which
+    /// is 1.2% of a core at 60 fps and grows with the document; comparing a
+    /// `u64` instead is free. Moving the caret does **not** change this, because
+    /// nothing derived from the text needs recomputing when it does.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn text(&self) -> &str {
@@ -151,6 +163,7 @@ impl Document {
         self.text.clear();
         self.raw_ranges.clear();
         self.caret = 0;
+        self.revision += 1;
     }
 
     /// Byte offset for a character offset.
@@ -203,6 +216,7 @@ impl Document {
 
         self.text.replace_range(start..end, &edit.text);
         self.caret = start + edit.text.len();
+        self.revision += 1;
     }
 
     /// Take in text the user edited by hand, keeping the red ranges attached to
@@ -215,6 +229,7 @@ impl Document {
         if new_text == self.text {
             return;
         }
+        self.revision += 1;
 
         let prefix = common_prefix(&self.text, new_text);
         let suffix = common_suffix(&self.text, new_text, prefix);
@@ -274,6 +289,7 @@ mod tests {
             text: text.to_owned(),
             raw_ranges,
             caret,
+            ..Default::default()
         }
     }
 
