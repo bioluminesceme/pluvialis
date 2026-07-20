@@ -194,7 +194,19 @@ Three things worth knowing before M4a:
 Main window: `TextEdit` with a custom layouter, tape strip on the right (recent strokes, raw steno plus translation), connection status bar. Raw untranslated strokes render red. Document model with red-range tracking and correct backspace handling. Temporary dev input: a text box where you type a raw stroke and press Enter, so the pipeline is exercisable before any machine exists (removed once M4a lands).
 **Verify:** type `KAT` in the dev box, "cat" appears; type nonsense like `TPHRPBLG`, it appears red as raw steno; type `*`, the red text disappears; correct spacing and capitalization after punctuation.
 
-### M4a. Machine trait, keymap layer, and Gemini PR  <- NEXT, start here
+### ~~M4a. Machine trait, keymap layer, and Gemini PR~~ DONE (commits `7bdc1f5`, `c88299f`, verified on hardware 2026-07-20)
+
+The Peregrine writes into Pluvialis. It connects on launch with no dialog, no machine selection and no restart, with both writers attached. 35 machine tests, 100 across the workspace, clippy clean.
+
+Two bugs surfaced only because both machines were attached at once, both now fixed and covered by tests:
+- **DTR was not asserted**, so the port opened, reported connected, and delivered nothing.
+- **The scanner opened the Luminex's serial port** while hunting for the Peregrine.
+
+The M3 dev box is removed; the Clear button moved to the tape panel.
+
+**The user's priority, stated 2026-07-20: the Luminex is her primary machine.** The Peregrine is only "much faster to set up". So M4b comes before M5, despite M5 (typing at the caret) being the more visible feature.
+
+### M4a original scope (for reference)
 
 **Measured on the real Peregrine, 2026-07-20. These are facts, not assumptions:**
 

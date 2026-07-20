@@ -12,7 +12,11 @@ Named after *Pluvialis*, the golden-plover genus (Latin *pluvia*, rain). Checked
 
 ## Status
 
-**M0, M1 and M2 are done. M3 (the live type window) is next**; `PLAN.md` has a "start here" block for it listing what already exists so it is not rebuilt.
+**M0 through M4a are done and verified on real hardware. M4b (Stenograph USB, the Luminex) is next**; `PLAN.md` has a measured facts block for it.
+
+The Peregrine writes into Pluvialis over Gemini PR, connecting on launch with no dialog and no machine selection, with both writers attached. 100 tests, clippy clean at `-D warnings`.
+
+**The Luminex is the user's primary machine**, so M4b comes before M5 even though M5 (typing at the caret) is the more visible feature. Its driver is already installed and bound, which removes the biggest unknown from M4b and M8.
 
 The translation core is complete and measured against the real dictionaries: 101,407 entries load in 52 ms, lookups run 400 ns to 4 us, and `pluvialis check` formats every entry in 52 ms and exits 0. Latency is a settled non issue; do not re-litigate it.
 
