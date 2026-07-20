@@ -80,6 +80,9 @@ pub struct LiveView {
     /// The editable text the user sees. Steno lands at its caret.
     document: Document,
 
+    /// Words written and how fast, for the status bar.
+    meter: crate::meter::Meter,
+
     /// The document's caret has moved for a reason the text widget does not
     /// know about, so the widget's own cursor must be told rather than asked.
     ///
@@ -152,6 +155,7 @@ impl LiveView {
             dictionaries: DictionaryStack::new(),
             translator: Translator::new(),
             document: Document::new(),
+            meter: crate::meter::Meter::new(),
             push_caret: false,
             shadow: Formatted::default(),
             layout: None,
@@ -565,12 +569,24 @@ impl LiveView {
         // they write.
         let caret_at_end = self.document.caret() == self.document.text().len();
 
+        // Fill the panel rather than growing into it. A multiline `TextEdit`
+        // defaults to four rows and expands as text arrives, so an empty
+        // document is a thin strip with dead space under it, and the click
+        // target for putting the caret somewhere is only as tall as the text.
+        // Asking for as many rows as fit makes the editor the whole panel from
+        // the start; the scroll area still takes over once the text is longer.
+        // The document's own font, not a text style: the layouter paints at
+        // DOCUMENT_FONT_SIZE, so any other measure gets the row count wrong.
+        let row_height = ui.fonts_mut(|f| f.row_height(&FontId::proportional(DOCUMENT_FONT_SIZE)));
+        let rows = (ui.available_height() / row_height).floor().max(1.0) as usize;
+
         let output = egui::ScrollArea::vertical()
             .stick_to_bottom(caret_at_end)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 egui::TextEdit::multiline(&mut text)
                     .desired_width(f32::INFINITY)
+                    .desired_rows(rows)
                     .layouter(&mut layouter)
                     .show(ui)
             })
@@ -759,6 +775,11 @@ impl LiveView {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
+        // Sampled here rather than on each stroke, so hand editing counts too
+        // and a pause is visible as the rate decaying rather than freezing.
+        let words = crate::meter::count_words(self.document.text());
+        self.meter.observe(ui.input(|i| i.time), words);
+
         ui.add_space(2.0);
         ui.horizontal(|ui| {
             // "Searching" is a normal resting state, not a failure, so it is
@@ -816,6 +837,25 @@ impl LiveView {
                     ui.label(format!("{} entries", self.dictionaries.entry_count()));
                 }
             }
+
+            // Right aligned, so the counters keep their place as the status on
+            // the left changes length between "Searching for a writer" and a
+            // connected machine's name.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                match self.meter.words_per_minute() {
+                    // Nothing rather than "0 wpm" before there is enough
+                    // writing to divide by. A confident zero is a worse answer
+                    // than no answer.
+                    None => ui.label(""),
+                    Some(rate) => ui.label(format!("{rate} wpm")).on_hover_text(
+                        "Real words per minute over the last minute, the way \
+                         dictation speeds are quoted. Falls as you pause.",
+                    ),
+                };
+                ui.separator();
+                ui.label(format!("{words} words"))
+                    .on_hover_text("Words in this document");
+            });
         });
         ui.add_space(2.0);
     }

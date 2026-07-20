@@ -9,6 +9,7 @@ mod cli;
 mod dictionaries;
 mod library;
 mod live;
+mod meter;
 mod storage;
 
 /// Reconnect to the terminal that launched us.
