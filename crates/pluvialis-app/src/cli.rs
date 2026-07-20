@@ -6,7 +6,7 @@
 //! (`convert`, `check`) arrive in M6 and will want a real argument parser.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use pluvialis_core::{Dictionary, DictionaryStack, Stroke, Translation, Translator};
@@ -33,6 +33,8 @@ pub fn run(args: &[String]) -> std::process::ExitCode {
         Some("clean") => clean(&args[1..]),
         Some("check") => check(&args[1..]),
         Some("machine") => machine(&args[1..]),
+        Some("import") => import(&args[1..]),
+        Some("dictionaries") => list_dictionaries(),
         Some(other) => {
             eprintln!("unknown command {other:?}");
             usage();
@@ -48,6 +50,78 @@ fn usage() {
     eprintln!("  pluvialis clean [--write] [DICTIONARY...]");
     eprintln!("  pluvialis check [DICTIONARY...]");
     eprintln!("  pluvialis machine [SECONDS]");
+    eprintln!("  pluvialis import <FILE> [FILE...]");
+    eprintln!("  pluvialis dictionaries");
+}
+
+/// Copy dictionaries into the library.
+///
+/// Pluvialis starts with no dictionaries, so this is how the first one arrives.
+/// Dropping the file into the library folder by hand does the same thing; this
+/// exists because it can say why a file was refused.
+fn import(args: &[String]) -> std::process::ExitCode {
+    if args.is_empty() {
+        eprintln!("usage: pluvialis import <FILE> [FILE...]");
+        eprintln!("accepts Plover .json and .py dictionaries");
+        return std::process::ExitCode::from(2);
+    }
+
+    let mut failed = false;
+    let mut imported_python = false;
+    for argument in args {
+        match crate::library::import(Path::new(argument)) {
+            Ok(destination) => {
+                imported_python |= destination.extension().is_some_and(|e| e == "py");
+                println!("imported {}", destination.display());
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                failed = true;
+            }
+        }
+    }
+
+    if imported_python {
+        println!("\nA Python dictionary is loaded switched off. Turn it on in the");
+        println!("Dictionaries pane once you have looked at what it does.");
+    }
+
+    if failed {
+        return std::process::ExitCode::FAILURE;
+    }
+    std::process::ExitCode::SUCCESS
+}
+
+/// What is in the library, in the priority order it will be used in.
+fn list_dictionaries() -> std::process::ExitCode {
+    if let Err(e) = crate::library::ensure() {
+        eprintln!("could not prepare the dictionary library: {e}");
+        return std::process::ExitCode::FAILURE;
+    }
+
+    let json = crate::library::json_dictionaries();
+    let python = crate::library::python_dictionaries();
+
+    println!("{}\n", crate::library::dir().display());
+    if json.is_empty() && python.is_empty() {
+        println!("No dictionaries yet. Add one with:");
+        println!("  pluvialis import <FILE>");
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    for path in &json {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        match Dictionary::load(path) {
+            Ok(dictionary) => println!("{name:<32} {:>7} entries", dictionary.len()),
+            Err(e) => println!("{name:<32} will not load: {e}"),
+        }
+    }
+    for path in &python {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        println!("{name:<32} Python, consulted last, off until enabled");
+    }
+
+    std::process::ExitCode::SUCCESS
 }
 
 /// Watch the Auto scanner and print everything it reports.

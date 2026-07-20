@@ -299,19 +299,10 @@ impl LiveView {
     fn load_dictionaries(&mut self) {
         // The library, not her Plover folder. Seeded from it on first run and
         // owned by Pluvialis afterwards; see `library`.
-        match crate::library::ensure() {
-            Ok(seeded) if !seeded.is_empty() => {
-                log::info!(
-                    "seeded the dictionary library with {}",
-                    seeded.join(", ")
-                );
-            }
-            Ok(_) => {}
-            Err(e) => {
-                log::error!("could not prepare the dictionary library: {e}");
-                self.load_error = Some(format!("dictionary library: {e}"));
-                return;
-            }
+        if let Err(e) = crate::library::ensure() {
+            log::error!("could not prepare the dictionary library: {e}");
+            self.load_error = Some(format!("dictionary library: {e}"));
+            return;
         }
 
         for path in crate::library::json_dictionaries() {

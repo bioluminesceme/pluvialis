@@ -16,9 +16,19 @@
 //! longer changes anything here, and editing the copy here does not change what
 //! Plover does. She accepted this knowing it, when the alternative was offered.
 //!
-//! Seeding happens **once**, when the folder does not yet exist. After that the
-//! folder is hers and nothing re-copies into it, or a dictionary she deliberately
-//! removed would silently return on the next start.
+//! **A fresh Pluvialis has no dictionaries at all.** Decided by the user the
+//! same day, after an earlier version of this module seeded the library from her
+//! Plover folder on first run: "not enabled by default. No dictionaries by
+//! default until the user imports them."
+//!
+//! That seeding is gone. It was convenient for exactly one person on exactly one
+//! machine, and it guessed: it decided which of her files were dictionaries and
+//! what their priority order should be, neither of which it could know. An empty
+//! library is honest about the fact that the program does not know what she
+//! wants to write with.
+//!
+//! Her existing library was left in place when this changed. Removing it would
+//! have deleted the dictionaries she writes with to make a default tidier.
 
 use std::path::{Path, PathBuf};
 
@@ -26,13 +36,6 @@ use std::path::{Path, PathBuf};
 pub fn dir() -> PathBuf {
     PathBuf::from(r"F:\Steno\Pluvialis\dictionaries")
 }
-
-/// Her Plover folder, read **only** to seed an empty library on first run, and
-/// never written to.
-const SEED_DIR: &str = r"C:\Users\Corien\AppData\Local\plover\plover";
-
-/// The JSON dictionaries she was using, in the priority order they had.
-const SEED_JSON: [&str; 2] = ["cb_dictionary_full.json", "corien-dutch.json"];
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
@@ -42,6 +45,15 @@ pub enum LibraryError {
         #[source]
         source: std::io::Error,
     },
+
+    #[error("{path}: not a dictionary, it defines no lookup")]
+    NotADictionary { path: PathBuf },
+
+    #[error("{path}: not a dictionary format Pluvialis reads (.json or .py)")]
+    UnsupportedFormat { path: PathBuf },
+
+    #[error("{path}: already in the library, remove it first to replace it")]
+    AlreadyPresent { path: PathBuf },
 }
 
 fn io(path: &Path) -> impl Fn(std::io::Error) -> LibraryError + '_ {
@@ -51,55 +63,69 @@ fn io(path: &Path) -> impl Fn(std::io::Error) -> LibraryError + '_ {
     }
 }
 
-/// Create the library if it is missing, seeding it from her Plover folder.
-///
-/// Returns whether anything was seeded, so the caller can say so rather than
-/// leaving the user wondering where the files came from.
-pub fn ensure() -> Result<Vec<String>, LibraryError> {
+/// Create the library folder if it is missing. It starts empty and stays empty
+/// until the user puts something in it.
+pub fn ensure() -> Result<(), LibraryError> {
     let dir = dir();
     if dir.exists() {
-        return Ok(Vec::new());
+        return Ok(());
     }
+    std::fs::create_dir_all(&dir).map_err(io(&dir))
+}
 
-    std::fs::create_dir_all(&dir).map_err(io(&dir))?;
+/// Copy a dictionary into the library.
+///
+/// Copies rather than references, which is the whole point of the library: the
+/// file Pluvialis reads is one nothing else writes to. The source is not
+/// modified or moved.
+///
+/// A `.py` source is screened first. Deciding whether a Python file is a
+/// dictionary by running it and seeing what happens is not an option, because a
+/// file that is not a dictionary can do anything at all when executed, and one
+/// in the user's own Plover folder copies a dictionary to another drive.
+///
+/// Refuses to overwrite. A name collision is far more likely to be an accident
+/// than an intent to replace, and the recovery from a wrong overwrite is a file
+/// the user may not have another copy of.
+pub fn import(source: &Path) -> Result<PathBuf, LibraryError> {
+    ensure()?;
 
-    let seed_dir = Path::new(SEED_DIR);
-    let mut copied = Vec::new();
+    let extension = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
 
-    for name in SEED_JSON {
-        let source = seed_dir.join(name);
-        if source.is_file() {
-            std::fs::copy(&source, dir.join(name)).map_err(io(&source))?;
-            copied.push(name.to_owned());
-        }
-    }
-
-    // Python dictionaries, screened first. Her folder holds `.py` files that
-    // are scripts rather than dictionaries, and one of them copies a dictionary
-    // to another drive when executed. The screen is what tells them apart
-    // without running anything.
-    if let Ok(entries) = std::fs::read_dir(seed_dir) {
-        for entry in entries.flatten() {
-            let source = entry.path();
-            if source.extension().and_then(|e| e.to_str()) != Some("py") {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&source) else {
-                continue;
-            };
+    match extension.as_str() {
+        "json" => {}
+        "py" => {
+            let text = std::fs::read_to_string(source).map_err(io(source))?;
             if !pluvialis_python::looks_like_a_dictionary(&text) {
-                log::info!("not seeding {}: it defines no lookup", source.display());
-                continue;
+                return Err(LibraryError::NotADictionary {
+                    path: source.to_path_buf(),
+                });
             }
-            let Some(name) = source.file_name() else {
-                continue;
-            };
-            std::fs::copy(&source, dir.join(name)).map_err(io(&source))?;
-            copied.push(name.to_string_lossy().into_owned());
+        }
+        _ => {
+            return Err(LibraryError::UnsupportedFormat {
+                path: source.to_path_buf(),
+            });
         }
     }
 
-    Ok(copied)
+    let Some(name) = source.file_name() else {
+        return Err(LibraryError::UnsupportedFormat {
+            path: source.to_path_buf(),
+        });
+    };
+
+    let destination = dir().join(name);
+    if destination.exists() {
+        return Err(LibraryError::AlreadyPresent { path: destination });
+    }
+
+    std::fs::copy(source, &destination).map_err(io(source))?;
+    Ok(destination)
 }
 
 /// The JSON dictionaries in the library, in priority order, highest first.
@@ -140,21 +166,36 @@ fn files_with_extension(extension: &str) -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
-    /// The seeded pair's order is load bearing, and this pins the coincidence
-    /// that alphabetical order preserves it. If a future dictionary needs to
-    /// outrank `cb_dictionary_full`, alphabetical order stops being enough and
-    /// this test is where that will show up.
-    #[test]
-    fn the_english_dictionary_outranks_the_dutch_one_alphabetically() {
-        let mut order = SEED_JSON;
-        order.sort();
-        assert_eq!(order, ["cb_dictionary_full.json", "corien-dutch.json"]);
-    }
-
     #[test]
     fn listing_a_missing_library_is_empty_rather_than_an_error() {
         // Called before `ensure`, or after the folder is deleted underneath us.
         let listed = files_with_extension("json");
         let _ = listed;
+    }
+
+    /// Importing is the only way in, so refusing the wrong thing matters.
+    #[test]
+    fn it_refuses_formats_it_cannot_read() {
+        let path = std::env::temp_dir().join("pluvialis-import-probe.rtf");
+        std::fs::write(&path, "not a dictionary").expect("writing the probe");
+        assert!(matches!(
+            import(&path),
+            Err(LibraryError::UnsupportedFormat { .. })
+        ));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A `.py` that is not a dictionary is refused without being executed. The
+    /// user's own Plover folder holds one that copies a dictionary to another
+    /// drive when run, so "import it and see what happens" is not an option.
+    #[test]
+    fn it_refuses_a_python_file_that_is_not_a_dictionary() {
+        let path = std::env::temp_dir().join("pluvialis-import-probe.py");
+        std::fs::write(&path, "import shutil\nshutil.copy2(a, b)\n").expect("writing the probe");
+        assert!(matches!(
+            import(&path),
+            Err(LibraryError::NotADictionary { .. })
+        ));
+        let _ = std::fs::remove_file(&path);
     }
 }

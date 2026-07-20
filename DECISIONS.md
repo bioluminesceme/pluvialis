@@ -385,3 +385,51 @@ the same notice so provenance travels with them.
 The general lesson is the one already in this project's working agreement, and
 this is the third time it has paid out: a confident claim in a document is not
 evidence. `cmp` is.
+
+### A fresh Pluvialis has no dictionaries
+
+**Decided by the user, 2026-07-20:** "not enabled by default. No dictionaries by
+default until the user imports them."
+
+This removes the seeding added earlier the same day, which copied her Plover
+dictionaries into the library on first run. Seeding was convenient for exactly
+one person on exactly one machine, and it guessed at two things it could not
+know: which of her files were dictionaries, and what their priority order should
+be.
+
+**Her existing library was left in place.** Deleting the dictionaries she writes
+with, to make a default tidier, would have been a bad trade.
+
+`import` copies a file in, and is the only way in besides putting the file in
+the folder by hand. It refuses three things: formats we do not read, a `.py`
+that defines no `lookup`, and a name that is already present. The last is a
+refusal rather than an overwrite because a collision is far likelier to be an
+accident than an intent to replace, and the file destroyed might be the only
+copy.
+
+A `.py` is screened rather than executed to find out what it is. Running an
+unknown Python file to see whether it behaves like a dictionary is not a test,
+it is just running it, and one file in her own Plover folder copies a dictionary
+to another drive when run.
+
+### A bundled starter dictionary is not decided yet
+
+The user raised two options: a minimal default (`"EU": "I"`) and Lapwing, then
+said "Blank is fine" and "Default lapwing is a good standard I think".
+
+**Nothing is bundled, and the blank default stands**, because bundling someone
+else's dictionary is a licensing question and this project got a licensing
+question wrong earlier the same day by assuming instead of checking. What is
+established:
+
+- Lapwing is **already on her machine**: `lapwing-base.json` (114,347 entries)
+  plus commands, numbers, proper nouns and UK additions, in her Plover backups
+  folder. She can import it in one command today, and personal use raises no
+  licensing question at all.
+- Its licence is **not established**. A first look did not find it, and the
+  obvious repository was not the right one.
+
+So the two cases are different and only one of them is urgent. For her own use,
+importing the local copy needs no decision from anyone. For a public release,
+bundling needs the licence checked and recorded in `ATTRIBUTION.md` first. That
+is a release chore, and the user has said a release may never happen.
