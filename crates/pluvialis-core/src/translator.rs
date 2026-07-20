@@ -40,6 +40,16 @@ impl Translation {
     pub fn is_untranslated(&self) -> bool {
         self.text.is_none()
     }
+
+    /// Build a translation directly. For tests that exercise formatting
+    /// without going through a dictionary.
+    pub fn for_test(strokes: Vec<Stroke>, text: Option<String>) -> Self {
+        Translation {
+            strokes,
+            text,
+            replaced: Vec::new(),
+        }
+    }
 }
 
 /// What changed as a result of one stroke.

@@ -5,10 +5,11 @@
 //! from them, reporting load time and lookup latency. Proper subcommands
 //! (`convert`, `check`) arrive in M6 and will want a real argument parser.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use pluvialis_core::{Dictionary, DictionaryStack, Stroke, Translator};
+use pluvialis_core::{Dictionary, DictionaryStack, Stroke, Translation, Translator};
 
 /// Where the user's dictionaries live. These are shared in place with her
 /// working Plover install and are never copied or modified.
@@ -23,6 +24,7 @@ pub fn run(args: &[String]) -> std::process::ExitCode {
     match args.first().map(String::as_str) {
         Some("lookup") => lookup(&args[1..]),
         Some("clean") => clean(&args[1..]),
+        Some("check") => check(&args[1..]),
         Some(other) => {
             eprintln!("unknown command {other:?}");
             usage();
@@ -36,6 +38,111 @@ fn usage() {
     eprintln!("usage:");
     eprintln!("  pluvialis lookup <OUTLINE> [OUTLINE...]");
     eprintln!("  pluvialis clean [--write] [DICTIONARY...]");
+    eprintln!("  pluvialis check [DICTIONARY...]");
+}
+
+/// Format every entry and report meta commands the formatter does not
+/// implement.
+///
+/// This is the acceptance test for the formatter: an unimplemented meta
+/// produces subtly wrong text rather than an error, so the only way to know
+/// the coverage is real is to run every entry through and see what falls out.
+fn check(args: &[String]) -> std::process::ExitCode {
+    let explicit: Vec<PathBuf> = args.iter().map(PathBuf::from).collect();
+    let targets: Vec<PathBuf> = if explicit.is_empty() {
+        DICTIONARIES
+            .iter()
+            .map(|name| PathBuf::from(DICTIONARY_DIR).join(name))
+            .collect()
+    } else {
+        explicit
+    };
+
+    let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
+    let mut examples: BTreeMap<String, String> = BTreeMap::new();
+    let mut checked = 0usize;
+
+    for path in targets {
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("{}: {e}", path.display());
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+        let entries: BTreeMap<String, String> = match serde_json::from_str(&text) {
+            Ok(entries) => entries,
+            Err(e) => {
+                eprintln!("{}: {e}", path.display());
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+
+        let started = Instant::now();
+        for (key, value) in &entries {
+            checked += 1;
+            // Format each entry on its own. Meta coverage does not depend on
+            // what came before it.
+            let translation = Translation::for_test(Vec::new(), Some(value.clone()));
+            let formatted = pluvialis_core::format::format(std::slice::from_ref(&translation));
+            for meta in formatted.unknown_metas {
+                *unknown.entry(meta.clone()).or_default() += 1;
+                examples.entry(meta).or_insert_with(|| key.clone());
+            }
+        }
+        println!(
+            "{}: {} entries checked in {:.0?}",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            entries.len(),
+            started.elapsed()
+        );
+    }
+
+    println!();
+    if unknown.is_empty() {
+        println!("{checked} entries checked, every meta command is implemented");
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    let (known, novel): (Vec<_>, Vec<_>) = unknown
+        .iter()
+        .partition(|(meta, _)| is_known_unsupported(meta));
+
+    if !known.is_empty() {
+        let uses: usize = known.iter().map(|(_, n)| **n).sum();
+        println!(
+            "{} meta commands unimplemented, {uses} uses. These do not work in Plover \
+             on this machine either, so nothing is lost:",
+            known.len()
+        );
+        for (meta, count) in &known {
+            let example = examples.get(*meta).map(String::as_str).unwrap_or("");
+            println!("  {{{meta}}}  {count} uses, for example in {example:?}");
+        }
+    }
+
+    if novel.is_empty() {
+        println!("\n{checked} entries checked, no unexpected meta commands");
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    println!("\n{} UNEXPECTED meta commands:", novel.len());
+    for (meta, count) in &novel {
+        let example = examples.get(*meta).map(String::as_str).unwrap_or("");
+        println!("  {{{meta}}}  {count} uses, for example in {example:?}");
+    }
+    std::process::ExitCode::FAILURE
+}
+
+/// Meta commands we do not implement and do not intend to, because the user's
+/// own Plover cannot handle them either.
+///
+/// `{*}`, `{*!}` and `{*?}` are absent from Plover 5.4's meta dispatch table.
+/// The rest need plugins (plover-stitching, plover-emoji) that are not
+/// installed. Implementing them would mean inventing semantics we have not
+/// read, which is how subtly wrong text gets into a document.
+fn is_known_unsupported(meta: &str) -> bool {
+    matches!(meta, "*" | "*!" | "*?" | ":emoji") || meta.starts_with(":stitch_last_word:")
 }
 
 /// Remove entries whose keys are not valid steno.

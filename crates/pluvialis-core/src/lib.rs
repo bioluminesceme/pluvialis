@@ -10,6 +10,9 @@
 
 pub mod clean;
 pub mod dictionary;
+pub mod format;
+pub mod orthography;
+pub mod orthography_rules;
 pub mod stroke;
 pub mod translator;
 

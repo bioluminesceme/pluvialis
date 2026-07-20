@@ -16,12 +16,6 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/highwaykind/pluvialis"
 
 [workspace.dependencies]
-pluvialis-core = { path = "crates/pluvialis-core" }
-pluvialis-machine = { path = "crates/pluvialis-machine" }
-pluvialis-output = { path = "crates/pluvialis-output" }
-pluvialis-script = { path = "crates/pluvialis-script" }
-
-anyhow = "1"
 thiserror = "2"
 log = "0.4"
 
