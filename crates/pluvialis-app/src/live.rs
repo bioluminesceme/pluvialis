@@ -1,15 +1,24 @@
-//! The live type window: the document, the tape strip, and a temporary dev
-//! input for driving strokes before a machine exists.
+//! The live type window: the editable document, the tape strip, and the status
+//! bar.
 //!
-//! The document is a pure function of the translator's history. Every stroke
-//! reformats the whole history rather than patching the widget, which is what
-//! makes retroactive correction (`WEL` then `KO*PL` becoming "welcome") work
-//! without any special case. Formatting 1000 translations costs microseconds.
+//! Up to M4b the document was a pure function of the translator's history, and
+//! every stroke replaced the whole text. That made retroactive correction free
+//! but allowed no caret: steno could only land at the end, and anything typed
+//! by hand was discarded by the next stroke.
 //!
-//! Untranslated strokes are painted red by a custom layouter fed from
-//! [`Formatted::raw_ranges`]. The ranges live in the document model, not in a
-//! render time buffer, so red survives scrolling and reflow and disappears only
-//! when the stroke that produced it is undone.
+//! Since M5 the formatter is unchanged and still formats the entire history,
+//! but its output is a *shadow* of what steno has produced rather than the
+//! document itself. Each stroke diffs the previous shadow against the new one
+//! to get "delete this much, insert this", and [`Document`] applies that edit
+//! at the caret. So retroactive correction still works, and the user can put
+//! the caret mid sentence and write there, or type by hand, without the two
+//! fighting.
+//!
+//! Untranslated strokes are painted red by a custom layouter fed from the
+//! document's raw ranges. Those ranges live in the document model, not in a
+//! render time buffer, and every edit shifts, trims or splits them, so red
+//! stays attached to the characters it belongs to through insertions,
+//! deletions and reflow.
 
 use std::sync::Arc;
 
@@ -18,7 +27,9 @@ use egui::text::{ByteIndex, LayoutJob, LayoutSection};
 use egui::{Color32, FontId, TextFormat};
 
 use pluvialis_core::format::{Formatted, format};
-use pluvialis_core::{Delta, Dictionary, DictionaryStack, Stroke, Translation, Translator};
+use pluvialis_core::{
+    Delta, Dictionary, DictionaryStack, Document, Stroke, Translation, Translator, steno_edit,
+};
 use pluvialis_machine::{MachineEvent, MachineStatus, Scanner, all_machines};
 
 /// Raw steno that found no dictionary entry.
@@ -51,7 +62,18 @@ struct TapeEntry {
 pub struct LiveView {
     dictionaries: DictionaryStack,
     translator: Translator,
-    formatted: Formatted,
+
+    /// The editable text the user sees. Steno lands at its caret.
+    document: Document,
+
+    /// The formatter's last output.
+    ///
+    /// Not the document: it is a shadow of what steno alone has produced, kept
+    /// so the next stroke can be diffed against it. Keeping them separate is
+    /// what lets the user edit the document by hand without the next stroke
+    /// undoing their edit, since the diff is computed against this rather than
+    /// against what is on screen.
+    shadow: Formatted,
 
     /// Memoised layout, with the raw colour it was built for so a theme
     /// switch rebuilds it. The layouter runs at least once per frame, so the
@@ -80,7 +102,8 @@ impl LiveView {
         let mut view = LiveView {
             dictionaries: DictionaryStack::new(),
             translator: Translator::new(),
-            formatted: Formatted::default(),
+            document: Document::new(),
+            shadow: Formatted::default(),
             layout: None,
             tape: Vec::new(),
             events_logged: 0,
@@ -188,30 +211,46 @@ impl LiveView {
         self.reformat();
     }
 
+    /// Reformat the whole stroke history and fold the change into the document
+    /// at the caret.
+    ///
+    /// The formatter still works on the entire history, which is what makes
+    /// retroactive correction (`WEL` then `KO*PL` becoming "welcome") fall out
+    /// for free. What changed at M5 is that its output is diffed against the
+    /// previous output rather than replacing the document, so the resulting
+    /// edit can be applied wherever the caret happens to be.
     fn reformat(&mut self) {
-        self.formatted = format(self.translator.history());
+        let next = format(self.translator.history());
+        let edit = steno_edit(&self.shadow, &next);
+
+        if !edit.is_empty() {
+            self.document.apply(&edit);
+        }
+        self.shadow = next;
         self.layout = None;
 
-        for meta in &self.formatted.unknown_metas {
+        for meta in &self.shadow.unknown_metas {
             log::warn!("unimplemented meta command {{{meta}}}");
         }
 
         // Key combos and PLOVER: commands are consumed by the output layer in
         // M5. Until then, seeing them go past confirms they are being parsed
         // out of the text rather than typed into the document.
-        if self.formatted.events.len() > self.events_logged {
-            for event in &self.formatted.events[self.events_logged..] {
-                log::info!("event (not yet dispatched, M5): {event:?}");
+        if self.shadow.events.len() > self.events_logged {
+            for event in &self.shadow.events[self.events_logged..] {
+                log::info!("event (not yet dispatched): {event:?}");
             }
         }
-        self.events_logged = self.formatted.events.len();
+        self.events_logged = self.shadow.events.len();
     }
 
     fn clear(&mut self) {
         self.translator.clear();
         self.tape.clear();
         self.events_logged = 0;
-        self.reformat();
+        self.document.clear();
+        self.shadow = Formatted::default();
+        self.layout = None;
     }
 
     /// The memoised layout job, rebuilt only when the document or theme
@@ -222,7 +261,11 @@ impl LiveView {
         {
             return job.clone();
         }
-        let job = Arc::new(highlight(&self.formatted, raw));
+        let job = Arc::new(highlight(
+            self.document.text(),
+            self.document.raw_ranges(),
+            raw,
+        ));
         self.layout = Some((raw, job.clone()));
         job
     }
@@ -245,22 +288,40 @@ impl LiveView {
             ui.fonts_mut(|f| f.layout_job(job))
         };
 
-        // Read only for now. The document is regenerated from translator
-        // history on every stroke, so manual edits would be silently discarded
-        // by the next stroke. Editing at the caret is M5, where the router and
-        // a real document model arrive together.
-        let mut text: &str = &self.formatted.text;
+        // The widget edits its own copy; the document is the source of truth
+        // and takes the result back below.
+        let mut text = self.document.text().to_owned();
 
-        egui::ScrollArea::vertical()
-            .stick_to_bottom(true)
+        // Follow the end only while the caret is actually there, which is the
+        // common case of writing forwards. Sticking unconditionally would drag
+        // the view to the bottom every stroke and make working mid document
+        // impossible; never sticking would stop the text following the user as
+        // they write.
+        let caret_at_end = self.document.caret() == self.document.text().len();
+
+        let output = egui::ScrollArea::vertical()
+            .stick_to_bottom(caret_at_end)
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(&mut text)
-                        .desired_width(f32::INFINITY)
-                        .layouter(&mut layouter),
-                );
-            });
+                egui::TextEdit::multiline(&mut text)
+                    .desired_width(f32::INFINITY)
+                    .layouter(&mut layouter)
+                    .show(ui)
+            })
+            .inner;
+
+        // Typing, pasting and deleting all arrive as a changed string rather
+        // than as an edit, so the document recovers the change by diffing and
+        // keeps the red ranges attached to their characters.
+        if text != self.document.text() {
+            self.document.reconcile(&text);
+            self.layout = None;
+        }
+
+        // egui counts characters, the document counts bytes.
+        if let Some(cursor) = output.cursor_range {
+            self.document.set_caret_char(cursor.primary.index.0);
+        }
     }
 
     fn tape_strip(&mut self, ui: &mut egui::Ui) {
@@ -360,12 +421,11 @@ fn describe(stroke: Stroke, delta: &Delta) -> String {
 /// so a range recorded earlier can end up stale. A stale range that splits a
 /// UTF-8 character would panic inside the layouter, which is a poor way to find
 /// out about it.
-fn highlight(formatted: &Formatted, raw_color: Color32) -> LayoutJob {
-    let text = &formatted.text;
+fn highlight(text: &str, raw_ranges: &[(usize, usize)], raw_color: Color32) -> LayoutJob {
     let font = FontId::proportional(DOCUMENT_FONT_SIZE);
 
     let mut job = LayoutJob {
-        text: text.clone(),
+        text: text.to_owned(),
         break_on_newline: true,
         ..Default::default()
     };
@@ -386,7 +446,7 @@ fn highlight(formatted: &Formatted, raw_color: Color32) -> LayoutJob {
     };
 
     let mut cursor = 0usize;
-    for &(start, end) in &formatted.raw_ranges {
+    for &(start, end) in raw_ranges {
         if start < cursor || end > text.len() || start >= end {
             continue;
         }
@@ -415,12 +475,9 @@ mod tests {
     /// lands.
     const RED: Color32 = RAW_COLOR_LIGHT;
 
-    fn formatted(text: &str, raw_ranges: Vec<(usize, usize)>) -> Formatted {
-        Formatted {
-            text: text.to_owned(),
-            raw_ranges,
-            ..Default::default()
-        }
+    /// A document's worth of text and its red ranges.
+    fn formatted(text: &str, raw_ranges: Vec<(usize, usize)>) -> (String, Vec<(usize, usize)>) {
+        (text.to_owned(), raw_ranges)
     }
 
     /// The sections must tile the text exactly, or characters go missing on
@@ -437,36 +494,37 @@ mod tests {
     #[test]
     fn raw_ranges_are_painted_red_and_the_rest_is_not() {
         let f = formatted("cat KAT dog", vec![(4, 7)]);
-        let job = highlight(&f, RED);
-        assert_covers(&job, &f.text);
+        let job = highlight(&f.0, &f.1, RED);
+        assert_covers(&job, &f.0);
         assert_eq!(job.sections.len(), 3);
         assert_eq!(job.sections[0].format.color, Color32::PLACEHOLDER);
         assert_eq!(job.sections[1].format.color, RED);
         let red = &job.sections[1].byte_range;
-        assert_eq!(&f.text[red.start.0..red.end.0], "KAT");
+        assert_eq!(&f.0[red.start.0..red.end.0], "KAT");
         assert_eq!(job.sections[2].format.color, Color32::PLACEHOLDER);
     }
 
     #[test]
     fn text_with_no_raw_steno_is_one_section() {
         let f = formatted("hello world", Vec::new());
-        let job = highlight(&f, RED);
-        assert_covers(&job, &f.text);
+        let job = highlight(&f.0, &f.1, RED);
+        assert_covers(&job, &f.0);
         assert_eq!(job.sections.len(), 1);
         assert_eq!(job.sections[0].format.color, Color32::PLACEHOLDER);
     }
 
     #[test]
     fn empty_document_produces_no_sections() {
-        let job = highlight(&formatted("", Vec::new()), RED);
+        let empty = formatted("", Vec::new());
+        let job = highlight(&empty.0, &empty.1, RED);
         assert!(job.sections.is_empty());
     }
 
     #[test]
     fn a_document_that_is_entirely_raw_steno_is_one_red_section() {
         let f = formatted("KAT", vec![(0, 3)]);
-        let job = highlight(&f, RED);
-        assert_covers(&job, &f.text);
+        let job = highlight(&f.0, &f.1, RED);
+        assert_covers(&job, &f.0);
         assert_eq!(job.sections.len(), 1);
         assert_eq!(job.sections[0].format.color, RED);
     }
@@ -474,8 +532,8 @@ mod tests {
     #[test]
     fn adjacent_raw_ranges_do_not_produce_an_empty_section_between_them() {
         let f = formatted("KATTKOG", vec![(0, 3), (3, 7)]);
-        let job = highlight(&f, RED);
-        assert_covers(&job, &f.text);
+        let job = highlight(&f.0, &f.1, RED);
+        assert_covers(&job, &f.0);
         assert_eq!(job.sections.len(), 2);
         assert!(job.sections.iter().all(|s| s.format.color == RED));
     }
@@ -485,16 +543,16 @@ mod tests {
         // Past the end, backwards, and overlapping the previous range: all
         // reachable if formatting rewrote earlier text.
         let f = formatted("short", vec![(0, 2), (1, 3), (4, 99), (3, 3)]);
-        let job = highlight(&f, RED);
-        assert_covers(&job, &f.text);
+        let job = highlight(&f.0, &f.1, RED);
+        assert_covers(&job, &f.0);
     }
 
     #[test]
     fn a_range_splitting_a_character_is_ignored() {
         // The pound sign is two bytes, so 1 is not a character boundary.
         let f = formatted("\u{00A3}5", vec![(1, 2)]);
-        let job = highlight(&f, RED);
-        assert_covers(&job, &f.text);
+        let job = highlight(&f.0, &f.1, RED);
+        assert_covers(&job, &f.0);
         assert!(job.sections.iter().all(|s| s.format.color != RED));
     }
 }
