@@ -120,7 +120,7 @@ Each one ends with something you can run and check, and gets its own git commit.
 
 **On hardware:** you do not need the Luminex for any milestone before M8, and you do not need to plug it into this PC at all until then. From M4a onward the **Peregrine** is the test machine, which is better than a fake dev input because it exercises the real stroke path. Plugging the Luminex in earlier does no harm, it just will not be used until its driver is installed at M8.
 
-### ~~M0. Toolchain and skeleton~~ DONE (commit `4055011`)
+### ~~M0. Toolchain and skeleton~~ DONE (commit `a071294`)
 rustc 1.97.1 MSVC, clippy and rustfmt installed. Workspace with all five crates builds; `pluvialis-app` opens a window titled Pluvialis; `cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 
 Two deviations from the plan as written, both recorded in `thingstonote.md`:
