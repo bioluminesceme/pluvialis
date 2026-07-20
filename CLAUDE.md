@@ -65,6 +65,22 @@ Never both. That is what makes double-typing structurally impossible rather than
 
 **Red raw steno persists** because the red ranges live in the document model, not a transient buffer. Steno only ever replaces text via backspaces, so red survives until undone, and undo removes the range with the text.
 
+## Licence
+
+**GPL-3.0-or-later.** Confirmed by the user on 2026-07-20 ("Yes to GPL3", then
+"or just use whatever license plover uses, I'm fine with anything really"). Both
+answers land in the same place: Plover is `GPL-2.0-or-later`, and the "or later"
+makes GPL-3 compatible with it.
+
+The choice is free rather than inherited. Pluvialis contains no Plover code, so
+nothing obliges it to be GPL at all; it is GPL because the user chose it. Keep it
+that way: **read Plover for reference, never copy from it.** The moment code is
+copied, the licence stops being a choice and the "independently written" claim in
+this file becomes false.
+
+`LICENSE` holds the canonical FSF text, fetched verbatim from gnu.org. Do not
+edit it. All five crates inherit `license.workspace = true`.
+
 ## Conventions
 
 - **Rust edition 2024**, MSVC toolchain, `rust-version = "1.92"`. Installed: rustc 1.97.1, clippy, rustfmt. Visual Studio 2022 Community provides the linker.
