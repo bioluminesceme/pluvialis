@@ -59,6 +59,23 @@ This leaks a handle on every disconnect. In a forever-retry loop that is a slow 
 
 ## Dictionaries and formatting (M1, M2)
 
+**`corien-dutch.json` has 433 keys that are not valid steno, and Plover rejects them too.** They look like `STKPWEU**URT` and `WEU*UF`: a doubled `U`, or a `*` placed after `-E`/`-U` when the canonical order is `A- O- * -E -U`. Verified against Plover's own `plover-stroke` 1.1.0, which raises `ValueError: invalid steno` on the same keys. These entries have never worked in Plover either, and that dictionary is not in her enabled list. **Do not "fix" the parser to accept them.** We skip them, count them, and print the first few.
+
+**To settle any parser disagreement, test against Plover's real implementation** rather than reasoning about it:
+```
+py -m pip install --target "$env:TEMP\pstroke" plover-stroke==1.1.0
+py -X utf8 -c "
+import sys, os; sys.path.insert(0, os.environ['TEMP']+'/pstroke')
+from plover_stroke import BaseStroke
+class S(BaseStroke): pass
+S.setup(('#','S-','T-','K-','P-','W-','H-','R-','A-','O-','*','-E','-U','-F','-R','-P','-B','-L','-G','-T','-S','-D','-Z'), ('A-','O-','*','-E','-U'), '#')
+print(S.from_steno('KAT').keys())
+"
+```
+Our parser matched Plover on every case tried, including rendering `TPHRPBLG` as `TPHR-PBLG`.
+
+**Canonical rendering is not what was typed.** `TPHRPBLG` has no center key, so a hyphen is required to mark the right bank and it renders as `TPHR-PBLG`. Raw untranslated steno in the live view will therefore sometimes not look like the keys pressed. This is correct and matches Plover; do not add a "preserve original spelling" path.
+
 **`LONGEST_KEY` is 15, not the usual 10.** Measured from `cb_dictionary_full.json`. The translator's stroke history window must accommodate it or long entries silently never match.
 
 **Never silently drop an unrecognised meta command.** Log it by exact string. A dropped meta does not crash, it produces subtly wrong text that the user discovers hours later in a document. For someone writing at speed, that is the worst available failure mode. `pluvialis check` reporting zero unknowns across both dictionaries is the M2 acceptance test.

@@ -130,9 +130,19 @@ Everything is on latest published versions: rustc 1.97.1, eframe and egui 0.35.0
 
 Remaining dependencies get added in the milestone that needs them, rather than up front: `serde`/`serde_json` (M1), `crossbeam-channel` and `serialport` (M4a), `windows` (M4b), `mlua` (M6).
 
-### M1. Core: strokes, dictionaries, translation
-`Stroke` parsing and canonical steno ordering (`#STKPWHR-AO*EUFRPBLGTSDZ`). JSON dictionary loader. Multi-dictionary priority lookup. Longest-match translator with retroactive correction and undo. No GUI, no meta commands yet.
-**Verify:** unit tests, plus a temporary `pluvialis lookup KAT/TPHAL` CLI subcommand answering from your real `cb_dictionary_full.json`. Load time and lookup latency printed (93k entries should load in well under a second).
+### ~~M1. Core: strokes, dictionaries, translation~~ DONE
+`crates/pluvialis-core/src/{stroke,dictionary,translator}.rs`, 26 tests, clippy clean.
+
+Measured against the real dictionaries via `pluvialis-app.exe lookup KAT WEL/KO*PL TPHRPBLG`:
+- 101,407 entries across both dictionaries **loaded in 52 ms**, longest key 15
+- lookups at **400 ns to 4 µs**, so translation latency is nowhere near being a concern
+- retroactive correction confirmed: `WEL` gives "well", then `KO*PL` withdraws it for "welcome"
+
+Two findings, both in `thingstonote.md`:
+- **433 keys in `corien-dutch.json` are not valid steno** (doubled `U`, `*` after `-E`/`-U`). Plover's own `plover-stroke` rejects them identically, so this is broken data, not a parser bug. They are skipped and reported.
+- Our parser was checked against `plover-stroke` 1.1.0 and agreed on every case tried.
+
+`jeff-phrasing.py` is not loadable by the CLI (it is Python); the native port is M6.
 
 ### M2. Formatter: spaces, capitalization, meta commands
 Implement exactly the meta set your dictionaries use, verified by the audit above: `{^suffix}`, `{prefix^}`, `{^infix^}`, `{&glue}`, `{-|}`, `{>}`, punctuation (`{.}` `{,}` `{?}` `{!}` `{;}` `{:}`), `{}`, `{#key combos}`, `{*!}`, `{*-|}`, `{*}`, `{~|}`, and the `{MODE:...}`/`{PLOVER:...}` entries present. Anything unrecognized is logged by name, never silently dropped. Orthography rules for suffixes (the "-ing" doubling rules and friends).

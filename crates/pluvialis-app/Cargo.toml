@@ -11,3 +11,4 @@ eframe = "0.35"
 egui = "0.35"
 env_logger = "0.11"
 log = { workspace = true }
+pluvialis-core = { version = "0.1.0", path = "../pluvialis-core" }

@@ -3,10 +3,29 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use eframe::egui;
+use std::process::ExitCode;
 
-fn main() -> eframe::Result {
+mod cli;
+
+fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    // Any argument means command line mode. With none, open the GUI.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.is_empty() {
+        return cli::run(&args);
+    }
+
+    match run_gui() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("could not start: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_gui() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Pluvialis")
