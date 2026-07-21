@@ -161,8 +161,8 @@ pub fn clean_dictionary(path: impl AsRef<Path>, dry_run: bool) -> Result<CleanRe
 }
 
 /// Drop the lines defining the given keys, then repair the trailing comma if
-/// the last entry was one of them.
-fn strip_keys(text: &str, remove: &BTreeMap<String, String>) -> String {
+/// the last entry was one of them. Shared with `edit`, which removes one key.
+pub(crate) fn strip_keys(text: &str, remove: &BTreeMap<String, String>) -> String {
     let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let mut kept: Vec<&str> = Vec::new();
 
@@ -194,7 +194,7 @@ fn strip_keys(text: &str, remove: &BTreeMap<String, String>) -> String {
 
 /// Extract the first JSON string on a line, which for an entry line is its
 /// key. Returns `None` for structural lines such as `{` and `}`.
-fn leading_json_string(line: &str) -> Option<String> {
+pub(crate) fn leading_json_string(line: &str) -> Option<String> {
     let rest = line.trim_start();
     let mut chars = rest.strip_prefix('"')?.chars();
     let mut key = String::new();
@@ -211,7 +211,7 @@ fn leading_json_string(line: &str) -> Option<String> {
     None
 }
 
-fn sibling(path: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let stem = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -219,7 +219,7 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
     path.with_file_name(format!("{stem}{suffix}"))
 }
 
-fn timestamp() -> u64 {
+pub(crate) fn timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

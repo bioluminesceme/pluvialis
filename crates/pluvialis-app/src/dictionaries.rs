@@ -12,10 +12,12 @@
 
 use eframe::egui;
 
-use pluvialis_core::{DictionaryStack, Stroke};
+use pluvialis_core::{Dictionary, DictionaryStack, Stroke, remove_entry, set_entry};
 
 /// One answer to a lookup, and which file it came from.
 struct Hit {
+    /// Index into the JSON dictionaries, so clicking a hit can edit it in place.
+    dict_index: usize,
     dictionary: String,
     value: String,
     /// Whether this is the one the translator would actually use.
@@ -31,6 +33,16 @@ pub struct DictionaryPane {
     reverse: Vec<String>,
     last_query: Option<String>,
     parse_error: Option<String>,
+
+    // The editor.
+    /// Which JSON dictionary a new entry is written to. Existing entries are
+    /// edited in the dictionary they already live in.
+    target: usize,
+    edit_outline: String,
+    edit_translation: String,
+    /// The outcome of the last edit: `Ok` for a success line, `Err` for a
+    /// refusal to show in red.
+    edit_message: Option<Result<String, String>>,
 }
 
 /// A short name for a dictionary, for the list.
@@ -68,6 +80,11 @@ impl DictionaryPane {
         ui.separator();
         ui.strong("Look up");
         self.lookup(ui, dictionaries);
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.strong("Edit");
+        self.editor(ui, dictionaries);
 
         changed
     }
@@ -172,8 +189,15 @@ impl DictionaryPane {
             ui.label(egui::RichText::new(error).small().weak());
         }
 
+        // What a clicked result should load into the editor below:
+        // (dictionary to target, outline, translation). Collected here and
+        // applied after the loop, since the loop only borrows the results.
+        let mut fill: Option<(Option<usize>, String, String)> = None;
+
+        // Capped so the editor below stays on screen; the results scroll within.
         egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
+            .max_height(180.0)
+            .auto_shrink([false, true])
             .show(ui, |ui| {
                 if !self.forward.is_empty() {
                     ui.add_space(4.0);
@@ -182,15 +206,22 @@ impl DictionaryPane {
                             let value = egui::RichText::new(format!("{:?}", hit.value));
                             // The winning entry is what the translator uses;
                             // the rest are shadowed by priority order.
-                            ui.label(match hit.winning {
+                            let value = match hit.winning {
                                 true => value.strong(),
                                 false => value.weak(),
-                            });
-                            ui.label(
-                                egui::RichText::new(&hit.dictionary)
-                                    .small()
-                                    .weak(),
-                            );
+                            };
+                            if ui
+                                .add(egui::Label::new(value).sense(egui::Sense::click()))
+                                .on_hover_text("Click to load into the editor below")
+                                .clicked()
+                            {
+                                fill = Some((
+                                    Some(hit.dict_index),
+                                    self.query.clone(),
+                                    hit.value.clone(),
+                                ));
+                            }
+                            ui.label(egui::RichText::new(&hit.dictionary).small().weak());
                         });
                     }
                 }
@@ -199,10 +230,28 @@ impl DictionaryPane {
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new("Written as").small().weak());
                     for outline in &self.reverse {
-                        ui.monospace(outline);
+                        if ui
+                            .add(
+                                egui::Label::new(egui::RichText::new(outline).monospace())
+                                    .sense(egui::Sense::click()),
+                            )
+                            .on_hover_text("Click to load into the editor below")
+                            .clicked()
+                        {
+                            fill = Some((None, outline.clone(), self.query.clone()));
+                        }
                     }
                 }
             });
+
+        if let Some((target, outline, translation)) = fill {
+            if let Some(index) = target {
+                self.target = index;
+            }
+            self.edit_outline = outline;
+            self.edit_translation = translation;
+            self.edit_message = None;
+        }
     }
 
     fn recompute(&mut self, dictionaries: &DictionaryStack) {
@@ -222,9 +271,10 @@ impl DictionaryPane {
         match Stroke::parse_outline(query) {
             Ok(strokes) => {
                 let winner = dictionaries.lookup(&strokes);
-                for dictionary in dictionaries.dictionaries() {
+                for (index, dictionary) in dictionaries.dictionaries().iter().enumerate() {
                     if let Some(value) = dictionary.lookup(&strokes) {
                         self.forward.push(Hit {
+                            dict_index: index,
                             dictionary: short_name(&dictionary.path),
                             value: value.to_owned(),
                             winning: dictionary.enabled && winner == Some(value),
@@ -256,6 +306,157 @@ impl DictionaryPane {
         self.reverse.sort_by_key(|outline| outline.len());
         self.reverse.truncate(20);
     }
+
+    /// Add, change or remove an entry. Writes go to Pluvialis's own dictionary
+    /// copies, never the user's Plover folder, and every write backs up the
+    /// file first and is verified before it lands; see `pluvialis_core::edit`.
+    fn editor(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) {
+        let names: Vec<String> = dictionaries
+            .dictionaries()
+            .iter()
+            .map(|d| short_name(&d.path))
+            .collect();
+        if names.is_empty() {
+            ui.label(
+                egui::RichText::new("No editable dictionaries. Add a JSON one first.")
+                    .small()
+                    .weak(),
+            );
+            return;
+        }
+        if self.target >= names.len() {
+            self.target = 0;
+        }
+
+        ui.horizontal(|ui| {
+            ui.label("New entries in");
+            egui::ComboBox::from_id_salt("edit-target")
+                .selected_text(names[self.target].clone())
+                .show_ui(ui, |ui| {
+                    for (index, name) in names.iter().enumerate() {
+                        ui.selectable_value(&mut self.target, index, name);
+                    }
+                });
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Outline");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.edit_outline)
+                    .hint_text("PHO*EF")
+                    .desired_width(f32::INFINITY),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Word   ");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.edit_translation)
+                    .hint_text("move")
+                    .desired_width(f32::INFINITY),
+            );
+        });
+
+        ui.horizontal(|ui| {
+            let has_outline = !self.edit_outline.trim().is_empty();
+            let can_save = has_outline && !self.edit_translation.is_empty();
+            if ui
+                .add_enabled(can_save, egui::Button::new("Save"))
+                .on_hover_text("Add the entry, or change its word if the outline already exists")
+                .clicked()
+            {
+                self.apply_edit(dictionaries, EditKind::Set);
+            }
+            if ui
+                .add_enabled(has_outline, egui::Button::new("Delete"))
+                .on_hover_text("Remove this outline from the dictionary it lives in")
+                .clicked()
+            {
+                self.apply_edit(dictionaries, EditKind::Remove);
+            }
+        });
+
+        match &self.edit_message {
+            Some(Ok(text)) => {
+                ui.label(egui::RichText::new(text).small());
+            }
+            Some(Err(text)) => {
+                ui.colored_label(ui.visuals().error_fg_color, egui::RichText::new(text).small());
+            }
+            None => {}
+        }
+    }
+
+    fn apply_edit(&mut self, dictionaries: &mut DictionaryStack, kind: EditKind) {
+        let outline = self.edit_outline.trim().to_owned();
+
+        // Editing an existing entry writes to whichever dictionary it is in;
+        // a new entry goes to the chosen target. Find the entry by parsing the
+        // outline and seeing which dictionary answers.
+        let owning = Stroke::parse_outline(&outline).ok().and_then(|strokes| {
+            dictionaries
+                .dictionaries()
+                .iter()
+                .position(|d| d.lookup(&strokes).is_some())
+        });
+        let index = match kind {
+            // A delete must target the dictionary that actually holds it.
+            EditKind::Remove => match owning {
+                Some(index) => index,
+                None => {
+                    self.edit_message =
+                        Some(Err(format!("{outline} is not in any editable dictionary")));
+                    return;
+                }
+            },
+            EditKind::Set => owning.unwrap_or(self.target),
+        };
+
+        let path = dictionaries.dictionaries()[index].path.clone();
+        let name = short_name(&path);
+
+        let result = match kind {
+            EditKind::Set => set_entry(&path, &outline, &self.edit_translation).map(|_| {
+                format!("Saved {outline} to {name}")
+            }),
+            EditKind::Remove => remove_entry(&path, &outline).map(|_| {
+                format!("Removed {outline} from {name}")
+            }),
+        };
+
+        match result {
+            Ok(message) => {
+                self.reload(dictionaries, index, &path);
+                self.invalidate();
+                self.edit_message = Some(Ok(message));
+            }
+            Err(e) => self.edit_message = Some(Err(e.to_string())),
+        }
+    }
+
+    /// Reload one dictionary from disk after editing it, so the change is live
+    /// immediately, keeping its enabled state and its place in the priority
+    /// order.
+    fn reload(&mut self, dictionaries: &mut DictionaryStack, index: usize, path: &std::path::Path) {
+        match Dictionary::load(path) {
+            Ok(mut reloaded) => {
+                reloaded.enabled = dictionaries.dictionaries()[index].enabled;
+                dictionaries.dictionaries_mut()[index] = reloaded;
+            }
+            Err(e) => {
+                // The file on disk is the edited one and is correct; only the
+                // in-memory copy is now stale, so say so rather than pretend.
+                self.edit_message = Some(Err(format!(
+                    "edited on disk, but reloading failed, restart to see it: {e}"
+                )));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum EditKind {
+    Set,
+    Remove,
 }
 
 #[cfg(test)]
