@@ -18,11 +18,15 @@ machine, every session. Pluvialis exists to remove that ritual: it scans for a
 writer continuously and connects the moment one appears, with no dialog and no
 machine selection.
 
-It is **not a fork or a port of Plover**. It is independently written, with
-Plover's source read as a specification for the wire protocols and behaviour.
-Two pieces of English-language data are copied from Plover so that orthography
-matches (the American English word list and the 38 orthography rules); see
-[ATTRIBUTION.md](ATTRIBUTION.md) for the precise record.
+Pluvialis owes a great deal to [Plover](https://github.com/openstenoproject/plover),
+the open-source stenography engine by the Open Steno Project. It is best understood
+as a partial reimplementation of Plover in Rust, with some features left out and
+some added. It is not literally a fork: the code is written fresh rather than
+branched from Plover's, and a few things behave deliberately differently. But it
+takes Plover's American English word list and its 38 orthography rules directly, so
+spelling matches, and it was built by reading Plover's source as the specification
+for every protocol and format. See [ATTRIBUTION.md](ATTRIBUTION.md) for exactly
+what comes from where, and the [Acknowledgements](#acknowledgements) below.
 
 The name is from *Pluvialis*, the golden-plover genus (Latin *pluvia*, rain).
 
@@ -145,6 +149,28 @@ machine-specific code stays quarantined:
 | `pluvialis-output` | Keystroke emulation into other applications (Win32 `SendInput`) |
 | `pluvialis-python` | Plover's Python dictionaries, run through embedded CPython |
 | `pluvialis-app` | The egui/eframe GUI, documents, autosave, versioning, and config |
+
+## Acknowledgements
+
+Pluvialis would not exist without [Plover](https://github.com/openstenoproject/plover),
+the open-source stenography engine by Joshua Harlan Lifton and the Open Steno
+Project contributors. Plover made open-source steno real, and this project is best
+understood as a partial reimplementation of it in Rust, with some features removed
+and some added:
+
+- Its American English word list and its 38 orthography rules are taken directly
+  from Plover, so suffixes and spelling behave exactly as a Plover user expects
+  (see [ATTRIBUTION.md](ATTRIBUTION.md)).
+- Plover's source was the specification for everything Pluvialis interoperates
+  with: the Stenograph and Gemini PR protocols, the steno key chart, the RTF/CRE
+  and Python dictionary formats, and the meta-command conventions.
+- Plover's design, and in a few places the specific problems this project set out
+  to solve, shaped how it works.
+
+Pluvialis is written independently rather than forked, but that speaks only to
+where the code came from, not to how much it owes Plover, which is a great deal.
+If you want mature, cross-platform stenography that supports far more hardware,
+use Plover. It is excellent, and Pluvialis stands on its shoulders.
 
 ## Licence
 
