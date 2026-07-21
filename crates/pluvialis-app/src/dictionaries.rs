@@ -50,7 +50,9 @@ impl DictionaryPane {
         self.last_query = None;
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) {
+    /// Returns whether the enabled state or order changed this frame, so the
+    /// caller can persist it.
+    pub fn ui(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) -> bool {
         ui.add_space(4.0);
         ui.strong("Dictionaries");
         ui.label(
@@ -60,15 +62,17 @@ impl DictionaryPane {
         );
         ui.separator();
 
-        self.list(ui, dictionaries);
+        let changed = self.list(ui, dictionaries);
 
         ui.add_space(8.0);
         ui.separator();
         ui.strong("Look up");
         self.lookup(ui, dictionaries);
+
+        changed
     }
 
-    fn list(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) {
+    fn list(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) -> bool {
         let count = dictionaries.dictionaries().len();
         // Applied after the loop: reordering mid iteration would renumber the
         // rows being drawn.
@@ -150,6 +154,7 @@ impl DictionaryPane {
         if changed {
             self.invalidate();
         }
+        changed
     }
 
     fn lookup(&mut self, ui: &mut egui::Ui, dictionaries: &DictionaryStack) {

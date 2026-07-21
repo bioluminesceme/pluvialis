@@ -1,6 +1,9 @@
 /target
 **/*.rs.bk
 *.pdb
+# Built or copied binaries (e.g. a release exe staged at the root to carry to
+# another machine). The real build output lives under target/.
+*.exe
 
 # The user's own dictionaries and documents: personal vocabulary and writing,
 # not part of the source. Pluvialis creates and seeds these folders on first
@@ -10,6 +13,7 @@
 /.pluvialis-history/
 pluvialis.log
 config.toml
+/pluvialis-config.json
 
 # Working and AI-collaboration docs: private notes, plan, decisions, and the
 # instructions Claude Code works from. Not published.

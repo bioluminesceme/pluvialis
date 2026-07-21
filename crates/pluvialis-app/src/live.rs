@@ -500,6 +500,7 @@ impl LiveView {
         }
 
         self.load_python_dictionaries();
+        self.apply_saved_enabled();
     }
 
     /// Find Plover Python dictionaries and load them **disabled**.
@@ -554,6 +555,45 @@ impl LiveView {
         if !errors.is_empty() {
             self.load_error = Some(errors.join("; "));
         }
+
+        // A dictionary re-added after being removed keeps its remembered state.
+        self.apply_saved_enabled();
+    }
+
+    /// Set each dictionary's enabled state from what was saved last run, keyed
+    /// by file name. A dictionary the file does not mention keeps its default,
+    /// which is on for JSON and off for Python.
+    fn apply_saved_enabled(&mut self) {
+        let saved = crate::config::load_enabled();
+        if saved.is_empty() {
+            return;
+        }
+        for entry in self.dictionaries.dictionaries_mut() {
+            if let Some(name) = entry.path.file_name()
+                && let Some(&enabled) = saved.get(name.to_string_lossy().as_ref())
+            {
+                entry.enabled = enabled;
+            }
+        }
+        for entry in self.dictionaries.programmatic_mut() {
+            if let Some(&enabled) = saved.get(&entry.name()) {
+                entry.set_enabled(enabled);
+            }
+        }
+    }
+
+    /// Record which dictionaries are enabled, so the choice survives a restart.
+    fn save_dictionary_state(&self) {
+        let mut state = std::collections::HashMap::new();
+        for entry in self.dictionaries.dictionaries() {
+            if let Some(name) = entry.path.file_name() {
+                state.insert(name.to_string_lossy().into_owned(), entry.enabled);
+            }
+        }
+        for entry in self.dictionaries.programmatic() {
+            state.insert(entry.name(), entry.is_enabled());
+        }
+        crate::config::save_enabled(&state);
     }
 
     /// Load one just-imported dictionary into the running stack.
@@ -754,6 +794,7 @@ impl LiveView {
 
         if self.show_dictionaries {
             let mut add_clicked = false;
+            let mut state_changed = false;
             egui::Panel::left("dictionaries")
                 .resizable(true)
                 .default_size(260.0)
@@ -769,10 +810,15 @@ impl LiveView {
                     {
                         add_clicked = true;
                     }
-                    self.dictionary_pane.ui(ui, &mut self.dictionaries);
+                    state_changed = self.dictionary_pane.ui(ui, &mut self.dictionaries);
                 });
             if add_clicked {
                 self.add_dictionaries();
+            }
+            // A toggled checkbox is remembered so it does not have to be set
+            // again next launch.
+            if state_changed {
+                self.save_dictionary_state();
             }
         }
 

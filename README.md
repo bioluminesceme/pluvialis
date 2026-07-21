@@ -56,7 +56,7 @@ that.
   thinking does not count against the rate.
 - **Bring your own dictionaries.** Import Plover JSON and Python dictionaries,
   then enable, disable, reorder by priority, and look up outlines or words in the
-  Dictionaries pane.
+  Dictionaries pane. Which dictionaries are enabled is remembered between runs.
 - **Command-line tools** for looking up outlines, checking dictionaries, and
   cleaning invalid entries.
 
