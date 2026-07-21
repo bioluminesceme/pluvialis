@@ -158,9 +158,22 @@ fn files_with_extension(extension: &str) -> Vec<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.is_file())
         .filter(|path| path.extension().and_then(|e| e.to_str()) == Some(extension))
+        // The safe-write in `clean` and `edit` leaves `name.backup-<stamp>.json`
+        // and `name.removed-<stamp>.json` siblings. They end in `.json` but they
+        // are not dictionaries, so they must not be loaded as ones.
+        .filter(|path| !is_edit_artifact(path))
         .collect();
     found.sort();
     found
+}
+
+/// Whether a file is a backup or removed-entries sibling from a safe write,
+/// rather than a dictionary in its own right.
+fn is_edit_artifact(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.contains(".backup-") || name.contains(".removed-"))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -172,6 +185,16 @@ mod tests {
         // Called before `ensure`, or after the folder is deleted underneath us.
         let listed = files_with_extension("json");
         let _ = listed;
+    }
+
+    /// The `.json` backups a safe write leaves behind must not be mistaken for
+    /// dictionaries and loaded a second time.
+    #[test]
+    fn safe_write_siblings_are_not_treated_as_dictionaries() {
+        assert!(is_edit_artifact(Path::new("main.backup-1784638489.json")));
+        assert!(is_edit_artifact(Path::new("main.removed-1784638489.json")));
+        assert!(!is_edit_artifact(Path::new("main.json")));
+        assert!(!is_edit_artifact(Path::new("phrasing.py")));
     }
 
     /// Importing is the only way in, so refusing the wrong thing matters.
