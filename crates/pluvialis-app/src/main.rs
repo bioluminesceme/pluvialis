@@ -2,6 +2,8 @@
 // log output is visible while developing.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// In memoriam, Knorrie. 20th of June 2011 - 20th of July 2026. RIP Snorriemonster. ❤️
+
 use eframe::egui;
 use std::process::ExitCode;
 
