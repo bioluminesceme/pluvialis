@@ -7,7 +7,7 @@ editor or into whatever other application has focus. It is aimed at people who
 write steno daily and want a tool that gets out of the way, in particular one
 that connects to the writer without a setup ritual every session.
 
-![The Pluvialis window: an editor with live steno text, an untranslated chord shown in red, a stroke tape on the right, and a status bar showing the connected writer, word count, and speed.](docs/screenshot.png)
+![The Pluvialis window: a top bar with Open, Save and Save As, an editor showing live steno text, a stroke tape on the right listing each outline and what it produced, and a status bar showing the connected writer, word count, and speed.](docs/screenshot.png)
 
 ## Why it exists
 
