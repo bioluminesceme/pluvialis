@@ -13,7 +13,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/highwaykind/pluvialis"
+repository = "https://github.com/bioluminesceme/pluvialis"
 
 [workspace.dependencies]
 thiserror = "2"

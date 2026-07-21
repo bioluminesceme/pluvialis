@@ -2,11 +2,21 @@
 **/*.rs.bk
 *.pdb
 
-# Runtime artifacts
+# The user's own dictionaries and documents: personal vocabulary and writing,
+# not part of the source. Pluvialis creates and seeds these folders on first
+# run.
+/dictionaries/
 /documents/
 /.pluvialis-history/
 pluvialis.log
 config.toml
+
+# Working and AI-collaboration docs: private notes, plan, decisions, and the
+# instructions Claude Code works from. Not published.
+/CLAUDE.md
+/PLAN.md
+/DECISIONS.md
+/thingstonote.md
 
 # Generated during the jeff-phrasing differential test (M6)
 /tests/generated/
