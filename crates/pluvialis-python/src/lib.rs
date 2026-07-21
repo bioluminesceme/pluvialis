@@ -17,10 +17,13 @@
 //! **This is the same trust model as Plover.** A Python dictionary is arbitrary
 //! code with no sandbox. Running one is running whatever its author wrote.
 //!
-//! **Embedding ties the executable to a Python installation.** Built against
-//! CPython 3.12 at `C:\Python312` on this machine. If Python is removed or
-//! upgraded in place, the exe stops starting, which is the cost of the
-//! generality this buys.
+//! **Embedding ties the executable to a Python installation, but not to one
+//! version.** Built against the CPython stable ABI (`abi3-py312`), so the exe
+//! links the version-independent `python3.dll` with 3.12 as the floor and runs
+//! against any CPython 3.12 or newer that is installed. The one runtime
+//! requirement is that `python3.dll` is findable on the DLL search path, which a
+//! standard CPython install on `PATH` provides. If no CPython 3.12+ is present,
+//! the exe stops starting, which is the cost of the generality this buys.
 
 use std::path::{Path, PathBuf};
 

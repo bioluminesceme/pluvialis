@@ -48,7 +48,7 @@ Cargo workspace at `F:\Steno\Pluvialis`, five crates so the machine-specific and
 | Crate | Responsibility | Platform |
 |---|---|---|
 | `pluvialis-core` | `Stroke`, keymap layer, dictionary loading and lookup, translator, formatter/meta commands, undo history | portable |
-| `pluvialis-python` | Plover Python dictionary host (embedded CPython via PyO3) | portable, needs a CPython install |
+| `pluvialis-python` | Plover Python dictionary host (embedded CPython via PyO3) | portable, needs a CPython 3.12+ install (stable ABI) |
 | `pluvialis-machine` | `Machine` trait plus every protocol: Stenograph USB, Gemini PR, TX Bolt, ProCAT, Passport, Plover HID, Stentura, keyboard | serial and HID are portable; Stenograph USB and the keyboard hook are Windows-specific behind `cfg` |
 | `pluvialis-output` | Keystroke emulation into other apps (Win32 `SendInput`) | Windows now |
 | `pluvialis-app` | egui/eframe GUI, documents, autosave, versioning, config | portable |

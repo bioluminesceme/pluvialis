@@ -12,9 +12,11 @@ thiserror = { workspace = true }
 pluvialis-core = { version = "0.1.0", path = "../pluvialis-core" }
 
 # auto-initialize starts the interpreter on first use, so nothing in the app has
-# to know Python exists. Embedding means the exe links against a specific
-# Python; see the crate docs for which one and why that matters.
-pyo3 = { version = "0.29", features = ["auto-initialize"] }
+# to know Python exists. abi3-py312 links the version-independent stable-ABI
+# `python3.dll` with 3.12 as the floor, so the same exe runs against any CPython
+# 3.12 or newer that is installed, rather than being tied to one `python3XY.dll`.
+# See the crate docs for what that buys and its one runtime requirement.
+pyo3 = { version = "0.29", features = ["auto-initialize", "abi3-py312"] }
 
 [dev-dependencies]
 serde_json = "1"

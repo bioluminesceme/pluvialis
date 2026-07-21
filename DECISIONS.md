@@ -170,9 +170,11 @@ dictionaries whose whole output can be enumerated, and it freezes them at
 conversion time.
 
 **Two costs, both real.** A Python dictionary is arbitrary code with no sandbox,
-the same trust model as Plover. And embedding ties the executable to a Python
-installation (CPython 3.12 at `C:\Python312`), which reverses the original
-"single exe, no Python" goal. The user chose this knowingly.
+the same trust model as Plover. And embedding ties the executable to a CPython
+installation, which reverses the original "single exe, no Python" goal. The user
+chose this knowingly. It is tied to a version *range* rather than one version:
+the build uses the stable ABI (`abi3-py312`), so the exe links the
+version-independent `python3.dll` and runs against any CPython 3.12 or newer.
 
 ### Python dictionaries load disabled
 
