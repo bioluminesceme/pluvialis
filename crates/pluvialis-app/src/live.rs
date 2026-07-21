@@ -246,6 +246,73 @@ impl LiveView {
         }
     }
 
+    /// Pick a file and folder, point autosave there, and save at once.
+    ///
+    /// The blocking dialog holds the UI thread while it is open, which is what
+    /// a desktop Save As does; strokes that arrive meanwhile are queued by the
+    /// machine thread and applied when it returns.
+    fn save_as(&mut self) {
+        // Owned copy so the dialog does not borrow storage while we build it.
+        let current = self.storage.current().map(|path| path.to_path_buf());
+
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Markdown", &["md"])
+            .add_filter("Text", &["txt"]);
+        if let Some(current) = &current {
+            if let Some(parent) = current.parent().filter(|p| !p.as_os_str().is_empty()) {
+                dialog = dialog.set_directory(parent);
+            }
+            if let Some(name) = current.file_name() {
+                dialog = dialog.set_file_name(name.to_string_lossy());
+            }
+        }
+
+        if let Some(path) = dialog.save_file() {
+            self.storage.choose_target(path);
+            self.save_now();
+        }
+    }
+
+    /// The top bar: save the live document, or choose where it lives.
+    fn toolbar(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            // An unnamed document has nowhere chosen to save to, so Save asks
+            // first rather than quietly writing the default untitled file.
+            if ui
+                .button("Save")
+                .on_hover_text("Write the document to disk now")
+                .clicked()
+            {
+                if self.storage.is_named() {
+                    self.save_now();
+                } else {
+                    self.save_as();
+                }
+            }
+            if ui
+                .button("Save As...")
+                .on_hover_text("Choose a file and folder; autosaves and history then go there too")
+                .clicked()
+            {
+                self.save_as();
+            }
+
+            ui.separator();
+            let name = self
+                .storage
+                .current_file_name()
+                .unwrap_or_else(|| "untitled.md".to_owned());
+            if self.storage.is_named() {
+                ui.label(name).on_hover_text("The file this document saves to");
+            } else {
+                ui.weak(format!("{name} (location not chosen)"))
+                    .on_hover_text("Autosaving to the default documents folder until you Save As");
+            }
+        });
+        ui.add_space(2.0);
+    }
+
     /// Save and clear the running marker, so the next start knows this was a
     /// clean exit.
     pub fn shutdown(&mut self) {
@@ -539,6 +606,7 @@ impl LiveView {
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         // egui 0.35 unified SidePanel and TopBottomPanel into `Panel`.
+        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::Panel::right("tape")
             .resizable(true)

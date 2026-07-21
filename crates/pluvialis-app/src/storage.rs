@@ -138,6 +138,9 @@ pub struct Storage {
     documents_dir: PathBuf,
     /// The file the document is saved to, once it has a name.
     current: Option<PathBuf>,
+    /// Whether the user has chosen a location (Save As), as opposed to the
+    /// default untitled file. A plain Save on an unnamed document prompts.
+    named: bool,
     /// What was last written, so an unchanged document costs no disk writes and
     /// produces no duplicate snapshots.
     last_saved: String,
@@ -149,6 +152,7 @@ impl Storage {
         Storage {
             documents_dir: documents_dir.into(),
             current: None,
+            named: false,
             last_saved: String::new(),
             autosave_interval: DEFAULT_AUTOSAVE,
         }
@@ -158,14 +162,39 @@ impl Storage {
         &self.documents_dir
     }
 
-    #[cfg(test)]
     pub fn current(&self) -> Option<&Path> {
         self.current.as_deref()
     }
 
+    /// The current file's name for display, e.g. `lecture.md`.
+    pub fn current_file_name(&self) -> Option<String> {
+        self.current
+            .as_deref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+    }
+
+    /// Whether the user has picked a location, so a plain Save can write
+    /// straight to it rather than having to ask where.
+    pub fn is_named(&self) -> bool {
+        self.named
+    }
+
+    /// Point autosave and Save at the default untitled file. Leaves the
+    /// document unnamed, so the first Save still prompts for a real location.
     pub fn set_current(&mut self, path: impl Into<PathBuf>) {
         self.current = Some(path.into());
+        self.named = false;
         // Unknown contents until the next save, so force one.
+        self.last_saved = String::new();
+    }
+
+    /// Point autosave, Save and the version history at a user chosen file.
+    /// Everything for the document then lives beside it; see `history_dir`.
+    pub fn choose_target(&mut self, path: impl Into<PathBuf>) {
+        self.current = Some(path.into());
+        self.named = true;
+        // A different file, whose contents we have not written, so force a save.
         self.last_saved = String::new();
     }
 
@@ -174,12 +203,20 @@ impl Storage {
         text != self.last_saved
     }
 
+    /// Where a document's snapshots live: beside the file itself, so saving to
+    /// a folder the user picked takes the history there too rather than leaving
+    /// it in the default documents folder. Falls back to the documents folder
+    /// for a path with no parent (a bare file name).
     fn history_dir(&self, document: &Path) -> PathBuf {
         let name = document
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_else(|| "untitled".to_owned());
-        self.documents_dir.join(HISTORY_DIR).join(name)
+        let base = document.parent().filter(|parent| !parent.as_os_str().is_empty());
+        match base {
+            Some(base) => base.join(HISTORY_DIR).join(name),
+            None => self.documents_dir.join(HISTORY_DIR).join(name),
+        }
     }
 
     /// Write the document and, if it changed, a snapshot.
@@ -200,7 +237,11 @@ impl Storage {
             }
         };
 
-        std::fs::create_dir_all(&self.documents_dir).map_err(io(&self.documents_dir))?;
+        // The target's own folder, not the documents folder: a document saved
+        // elsewhere must not resurrect the default one.
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(io(parent))?;
+        }
         // UTF-8 throughout, which write_all of a &str guarantees.
         std::fs::write(&path, text).map_err(io(&path))?;
 
@@ -421,6 +462,49 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn choosing_a_target_names_the_document_and_saves_there() {
+        let dir = std::env::temp_dir().join(format!("pluvialis-target-{}", now_millis()));
+        let elsewhere = dir.join("elsewhere");
+        let mut storage = Storage::new(&dir);
+
+        assert!(!storage.is_named(), "starts unnamed");
+        assert_eq!(storage.current_file_name(), None);
+
+        let target = elsewhere.join("lecture.md");
+        storage.choose_target(&target);
+        assert!(storage.is_named(), "choosing a target names it");
+        assert_eq!(storage.current_file_name().as_deref(), Some("lecture.md"));
+
+        assert!(storage.save("notes").expect("save"));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "notes");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Saving to a folder the user picked must take the version history there,
+    /// not leave it in the default documents folder.
+    #[test]
+    fn history_lives_beside_the_chosen_file() {
+        let documents = std::env::temp_dir().join(format!("pluvialis-docs-{}", now_millis()));
+        let chosen = documents.join("chosen");
+        let mut storage = Storage::new(&documents);
+
+        let target = chosen.join("lecture.md");
+        storage.choose_target(&target);
+        assert!(storage.save("first").expect("save"));
+        assert!(storage.save("second").expect("save"), "changed text snapshots");
+
+        let history = chosen.join(HISTORY_DIR).join("lecture");
+        assert!(history.is_dir(), "history sits beside the chosen file");
+        assert_eq!(storage.snapshots().len(), 2);
+
+        let stray = documents.join(HISTORY_DIR);
+        assert!(!stray.exists(), "nothing written under the documents folder");
+
+        let _ = std::fs::remove_dir_all(&documents);
     }
 
     #[test]

@@ -20,6 +20,9 @@ windows = { version = "0.62", features = [
 ] }
 eframe = "0.35"
 egui = "0.35"
+# Native Save As dialog. Windows uses the OS file picker; no async runtime
+# needed since we call the blocking `save_file`.
+rfd = "0.15"
 env_logger = "0.11"
 log = { workspace = true }
 pluvialis-core = { version = "0.1.0", path = "../pluvialis-core" }
