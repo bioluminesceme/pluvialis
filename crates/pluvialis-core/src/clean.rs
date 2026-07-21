@@ -136,13 +136,17 @@ pub fn clean_dictionary(path: impl AsRef<Path>, dry_run: bool) -> Result<CleanRe
     // Everything checks out. Save the original and the removed entries before
     // overwriting, so this is always reversible.
     let stamp = timestamp();
-    let backup = sibling(&path, &format!(".backup-{stamp}.json"));
+    ensure_backup_dir(&path).map_err(|source| CleanError::Write {
+        path: backup_dir(&path),
+        source,
+    })?;
+    let backup = backup_path(&path, &format!(".backup-{stamp}.json"));
     std::fs::write(&backup, &text).map_err(|source| CleanError::Write {
         path: backup.clone(),
         source,
     })?;
 
-    let removed_file = sibling(&path, &format!(".removed-{stamp}.json"));
+    let removed_file = backup_path(&path, &format!(".removed-{stamp}.json"));
     let removed_json =
         serde_json::to_string_pretty(&report.removed).expect("a map of strings always serializes");
     std::fs::write(&removed_file, removed_json).map_err(|source| CleanError::Write {
@@ -154,6 +158,8 @@ pub fn clean_dictionary(path: impl AsRef<Path>, dry_run: bool) -> Result<CleanRe
         path: path.clone(),
         source,
     })?;
+
+    prune_backups(&path, BACKUPS_KEPT);
 
     report.backup = Some(backup);
     report.removed_file = Some(removed_file);
@@ -211,12 +217,70 @@ pub(crate) fn leading_json_string(line: &str) -> Option<String> {
     None
 }
 
-pub(crate) fn sibling(path: &Path, suffix: &str) -> PathBuf {
+/// How many safe-write backups to keep per dictionary. Older ones are pruned,
+/// so per-edit backups do not pile up in a folder the user browses. Four is
+/// enough to undo a short run of mistakes without turning the folder into an
+/// archive; the dictionary itself is never deleted, only its old copies.
+pub(crate) const BACKUPS_KEPT: usize = 4;
+
+/// The subfolder beside a dictionary where safe-write backups live, so the
+/// dictionary folder the user opens in VSCode stays free of them. A directory,
+/// so the library's file scan skips it.
+pub(crate) fn backup_dir(path: &Path) -> PathBuf {
+    path.parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".backups")
+}
+
+pub(crate) fn ensure_backup_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(backup_dir(path))
+}
+
+/// The path for one backup or removed-entries file, inside `.backups`, named
+/// after the dictionary so several dictionaries can share the folder.
+pub(crate) fn backup_path(path: &Path, suffix: &str) -> PathBuf {
     let stem = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "dictionary".to_owned());
-    path.with_file_name(format!("{stem}{suffix}"))
+    backup_dir(path).join(format!("{stem}{suffix}"))
+}
+
+/// Keep only the newest `keep` backups for this dictionary, deleting older ones.
+/// Best effort: a file that cannot be removed is left rather than failing the
+/// edit that already succeeded.
+pub(crate) fn prune_backups(path: &Path, keep: usize) {
+    prune_matching(path, ".backup-", keep);
+    prune_matching(path, ".removed-", keep);
+}
+
+fn prune_matching(path: &Path, infix: &str, keep: usize) {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return;
+    };
+    let prefix = format!("{stem}{infix}");
+    let Ok(entries) = std::fs::read_dir(backup_dir(path)) else {
+        return;
+    };
+    let mut matches: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with(&prefix))
+                .unwrap_or(false)
+        })
+        .collect();
+    // The stamp is Unix seconds, ten digits for the next 260 years, so a
+    // lexical sort is a chronological one. Oldest first, delete all but `keep`.
+    matches.sort();
+    if matches.len() > keep {
+        for old in &matches[..matches.len() - keep] {
+            let _ = std::fs::remove_file(old);
+        }
+    }
 }
 
 pub(crate) fn timestamp() -> u64 {
@@ -300,6 +364,49 @@ mod tests {
         assert_eq!(report.removed_count(), 0);
         assert!(report.backup.is_none(), "no backup for an unchanged file");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    }
+
+    #[test]
+    fn backups_land_in_the_backups_subfolder_not_beside_the_dictionary() {
+        let path = temp(
+            "pluv_clean_subfolder.json",
+            "{\n  \"KAT\": \"cat\",\n  \"WEU*UF\": \"broken\"\n}\n",
+        );
+        let report = clean_dictionary(&path, false).unwrap();
+        let backup = report.backup.unwrap();
+        assert_eq!(backup.parent().unwrap().file_name().unwrap(), ".backups");
+        assert!(backup.exists());
+    }
+
+    /// Editing repeatedly must not turn the backup folder into an archive: only
+    /// the newest few survive. Tested directly, with distinct stamps, because
+    /// real edits within one second would share a filename.
+    #[test]
+    fn pruning_keeps_only_the_newest_backups() {
+        let base = std::env::temp_dir().join("pluv_prune_probe");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let dict = base.join("main.json");
+        let backups = backup_dir(&dict);
+        std::fs::create_dir_all(&backups).unwrap();
+        for stamp in [1000, 1001, 1002, 1003, 1004, 1005] {
+            std::fs::write(backups.join(format!("main.backup-{stamp}.json")), "x").unwrap();
+        }
+
+        prune_backups(&dict, 4);
+
+        let mut remaining: Vec<String> = std::fs::read_dir(&backups)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.starts_with("main.backup-"))
+            .collect();
+        remaining.sort();
+        assert_eq!(remaining.len(), 4);
+        // The two oldest are gone, the newest four remain.
+        assert_eq!(remaining.first().unwrap(), "main.backup-1002.json");
+        assert_eq!(remaining.last().unwrap(), "main.backup-1005.json");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -17,7 +17,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::clean::{leading_json_string, sibling, strip_keys, timestamp};
+use crate::clean::{
+    BACKUPS_KEPT, backup_dir, backup_path, ensure_backup_dir, leading_json_string, prune_backups,
+    strip_keys, timestamp,
+};
 use crate::stroke::{Stroke, StrokeError};
 
 #[derive(Debug, thiserror::Error)]
@@ -328,7 +331,11 @@ fn parse_verify(path: &Path, text: &str) -> Result<BTreeMap<String, String>, Edi
 }
 
 fn write_with_backup(path: &Path, original: &str, updated: &str) -> Result<PathBuf, EditError> {
-    let backup = sibling(path, &format!(".backup-{}.json", timestamp()));
+    ensure_backup_dir(path).map_err(|source| EditError::Write {
+        path: backup_dir(path),
+        source,
+    })?;
+    let backup = backup_path(path, &format!(".backup-{}.json", timestamp()));
     std::fs::write(&backup, original).map_err(|source| EditError::Write {
         path: backup.clone(),
         source,
@@ -337,6 +344,7 @@ fn write_with_backup(path: &Path, original: &str, updated: &str) -> Result<PathB
         path: path.to_path_buf(),
         source,
     })?;
+    prune_backups(path, BACKUPS_KEPT);
     Ok(backup)
 }
 

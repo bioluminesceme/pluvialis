@@ -158,9 +158,10 @@ fn files_with_extension(extension: &str) -> Vec<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.is_file())
         .filter(|path| path.extension().and_then(|e| e.to_str()) == Some(extension))
-        // The safe-write in `clean` and `edit` leaves `name.backup-<stamp>.json`
-        // and `name.removed-<stamp>.json` siblings. They end in `.json` but they
-        // are not dictionaries, so they must not be loaded as ones.
+        // Safe-write backups now go into a `.backups` subfolder, which this
+        // scan skips because it is a directory. This filter still guards any
+        // legacy `name.backup-<stamp>.json` files left flat in the folder by an
+        // older build: they end in `.json` but are not dictionaries.
         .filter(|path| !is_edit_artifact(path))
         .collect();
     found.sort();
