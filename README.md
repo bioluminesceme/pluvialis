@@ -54,6 +54,9 @@ that.
   by age, and crash recovery.
 - **A live words-per-minute meter** measured in real words, excluding pauses, so
   thinking does not count against the rate.
+- **Bring your own dictionaries.** Import Plover JSON and Python dictionaries,
+  then enable, disable, reorder by priority, and look up outlines or words in the
+  Dictionaries pane.
 - **Command-line tools** for looking up outlines, checking dictionaries, and
   cleaning invalid entries.
 
@@ -71,10 +74,15 @@ implemented.
 
 ## Dictionaries
 
-Pluvialis owns its dictionaries, in `dictionaries\`. On first run the folder is
-seeded once from the local Plover configuration if present; after that Pluvialis
-never re-copies into it, so a dictionary you remove stays removed. You can edit
-the files directly in an editor.
+A fresh Pluvialis starts with **no dictionaries**. You add your own, and
+Pluvialis copies each into `dictionaries\` and owns that copy: the file it reads
+is one nothing else writes to, so it can never be changed underneath you by
+another program. The original you imported from is left untouched. You can edit
+the copies directly in an editor.
+
+Add a dictionary with the **Add dictionary** button in the Dictionaries pane, or
+from the command line with `pluvialis import <FILE>`. Both accept Plover `.json`
+and `.py` dictionaries and refuse anything else.
 
 - **JSON dictionaries** (RTF/CRE format) load enabled, in priority order.
 - **Python dictionaries** (Plover's `.py` dictionaries, such as jeff-phrasing)

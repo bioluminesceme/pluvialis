@@ -525,6 +525,71 @@ impl LiveView {
         }
     }
 
+    /// Import dictionary files the user picked and add them to the live stack.
+    ///
+    /// Appends rather than rebuilding, so session reordering and any Python
+    /// dictionary already enabled survive adding another. A new JSON dictionary
+    /// arrives at the lowest priority and can be moved up in the pane. Copying
+    /// into the library, validating, and refusing duplicates is `library::import`;
+    /// the original file is not moved or changed.
+    fn add_dictionaries(&mut self) {
+        let Some(files) = rfd::FileDialog::new()
+            .add_filter("Dictionaries", &["json", "py"])
+            .add_filter("All files", &["*"])
+            .pick_files()
+        else {
+            return;
+        };
+
+        let mut errors = Vec::new();
+        for file in &files {
+            match crate::library::import(file) {
+                Ok(destination) => self.load_added(&destination, &mut errors),
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+
+        // Leave any earlier load error in place on success: the new dictionary
+        // appearing in the pane is the confirmation that the add worked.
+        if !errors.is_empty() {
+            self.load_error = Some(errors.join("; "));
+        }
+    }
+
+    /// Load one just-imported dictionary into the running stack.
+    fn load_added(&mut self, path: &std::path::Path, errors: &mut Vec<String>) {
+        use pluvialis_core::ProgrammaticDictionary;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+
+        match path.extension().and_then(|e| e.to_str()) {
+            // Off on arrival, like the Python dictionaries found at startup: it
+            // is unsandboxed code, so the user enables it once she has looked at
+            // what it does.
+            Some("py") => match pluvialis_python::PythonDictionary::load(path) {
+                Ok(mut dictionary) => {
+                    dictionary.set_enabled(false);
+                    self.dictionaries.push_programmatic(Box::new(dictionary));
+                }
+                Err(e) => errors.push(format!("{name}: {e}")),
+            },
+            _ => match Dictionary::load(path) {
+                Ok(dictionary) => {
+                    let bad = dictionary.bad_keys().len();
+                    if bad > 0 {
+                        log::warn!("{name}: {bad} keys are not valid steno and were skipped");
+                    }
+                    self.loaded
+                        .push(format!("{name} ({} entries)", dictionary.len()));
+                    self.dictionaries.push(dictionary);
+                }
+                Err(e) => errors.push(format!("{name}: {e}")),
+            },
+        }
+    }
+
     /// Feed one stroke through the translator and rebuild the document.
     ///
     /// This is the seam M4a plugs the machine into: everything below the
@@ -688,12 +753,27 @@ impl LiveView {
             .show(ui, |ui| self.tape_strip(ui));
 
         if self.show_dictionaries {
+            let mut add_clicked = false;
             egui::Panel::left("dictionaries")
                 .resizable(true)
                 .default_size(260.0)
                 .show(ui, |ui| {
+                    ui.add_space(4.0);
+                    if ui
+                        .button("Add dictionary...")
+                        .on_hover_text(
+                            "Copy a Plover .json or .py dictionary into Pluvialis. \
+                             The original is not moved or changed.",
+                        )
+                        .clicked()
+                    {
+                        add_clicked = true;
+                    }
                     self.dictionary_pane.ui(ui, &mut self.dictionaries);
                 });
+            if add_clicked {
+                self.add_dictionaries();
+            }
         }
 
         egui::CentralPanel::default().show(ui, |ui| self.document(ui));
