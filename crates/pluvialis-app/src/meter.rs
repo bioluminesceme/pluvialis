@@ -35,11 +35,6 @@ const WINDOW_SECONDS: f64 = 60.0;
 /// enough that a pause is excluded promptly.
 const IDLE_SECONDS: f64 = 3.0;
 
-/// Samples closer together than this are not worth keeping. At 60 fps an
-/// unthrottled sample per frame would be 3,600 entries a minute, all of them
-/// describing the same writing.
-const MIN_SAMPLE_GAP: f64 = 0.25;
-
 #[derive(Default)]
 pub struct Meter {
     /// `(seconds, cumulative words)`, oldest first.
@@ -57,22 +52,28 @@ impl Meter {
     ///
     /// `now` is egui's frame time: monotonic seconds since the program started.
     pub fn observe(&mut self, now: f64, words: usize) {
-        if let Some(&(_, previous)) = self.samples.back()
-            && words > previous
-        {
-            self.last_wrote = Some(now);
-        }
-
-        match self.samples.back() {
-            // Nothing changed and no time worth recording has passed.
-            Some(&(when, count)) if count == words && now - when < MIN_SAMPLE_GAP => {}
-            Some(&(when, _)) if now - when < MIN_SAMPLE_GAP => {
-                // The count moved within the throttle window. Replace rather
-                // than drop, so a fast burst is not undercounted.
-                self.samples.pop_back();
+        match self.samples.back().map(|&(_, count)| count) {
+            // A new word, or several in one stroke: record it against the last
+            // count, and note that writing happened.
+            Some(previous) if words > previous => {
+                self.last_wrote = Some(now);
                 self.samples.push_back((now, words));
             }
-            _ => self.samples.push_back((now, words)),
+            // A deletion: record the new count so a later word measures its gap
+            // from here, but deleting is not writing.
+            Some(previous) if words < previous => {
+                self.samples.push_back((now, words));
+            }
+            // Unchanged. Record nothing. This is the whole correctness point:
+            // inserting a sample here (which a per-frame caller would do
+            // constantly) splits the gap between two words into zero-width
+            // intervals and drops the pause from the denominator, so the rate
+            // reads far faster than the writing. The gap must stay as one
+            // interval between the two words that bound it.
+            Some(_) => {}
+            // The first observation, a baseline for the first word to measure
+            // against.
+            None => self.samples.push_back((now, words)),
         }
 
         while let Some(&(when, _)) = self.samples.front() {
@@ -271,7 +272,9 @@ mod tests {
         assert_eq!(meter.words_per_minute(), Some(120));
     }
 
-    /// At 60 fps this is called every frame. It must not grow without bound.
+    /// At 60 fps this is called every frame. It must not grow with the frame
+    /// count: only a changed word count records a sample, so the window holds at
+    /// most about one per word written in the last minute.
     #[test]
     fn sampling_every_frame_does_not_accumulate_forever() {
         let mut meter = Meter::new();
@@ -280,10 +283,38 @@ mod tests {
             now += 1.0 / 60.0;
             meter.observe(now, frame / 60);
         }
+        // The word count rises once a second, so a 60 second window can hold
+        // only about sixty samples however many frames went by.
         assert!(
-            meter.samples.len() <= (WINDOW_SECONDS / MIN_SAMPLE_GAP) as usize + 2,
+            meter.samples.len() <= WINDOW_SECONDS as usize + 2,
             "kept {} samples",
             meter.samples.len()
+        );
+    }
+
+    /// The regression this file exists to prevent. Writing a word every 1.5
+    /// seconds is 40 wpm. Sampled every frame through the gaps, the meter used
+    /// to drop the gaps from the denominator and read roughly three times fast.
+    #[test]
+    fn per_frame_sampling_between_words_reads_the_true_rate() {
+        let mut meter = Meter::new();
+        let mut now = 0.0;
+        let mut words = 0;
+
+        for _ in 0..30 {
+            // A word and a half of thinking, sampled at 60 fps the whole time.
+            for _ in 0..90 {
+                now += 1.0 / 60.0;
+                meter.observe(now, words);
+            }
+            words += 1;
+            meter.observe(now, words);
+        }
+
+        let rate = meter.words_per_minute().expect("a rate");
+        assert!(
+            (38..=42).contains(&rate),
+            "40 wpm sampled every frame read as {rate}"
         );
     }
 }
