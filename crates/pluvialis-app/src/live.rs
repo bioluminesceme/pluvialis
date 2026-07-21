@@ -273,10 +273,84 @@ impl LiveView {
         }
     }
 
-    /// The top bar: save the live document, or choose where it lives.
+    /// Open an existing document, saving the current one first.
+    ///
+    /// The opened text has no steno behind it, so it is loaded as plain
+    /// document content and writing continues from the end of it. Saving and
+    /// autosave then target the opened file.
+    fn open(&mut self) {
+        // Owned so the dialog does not borrow storage while we build it.
+        let start_dir = self
+            .storage
+            .current()
+            .and_then(|path| path.parent())
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| p.to_path_buf());
+
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Text and Markdown", &["md", "txt"])
+            .add_filter("All files", &["*"]);
+        if let Some(dir) = start_dir {
+            dialog = dialog.set_directory(dir);
+        }
+
+        let Some(path) = dialog.pick_file() else {
+            return;
+        };
+
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                // Do not lose whatever is on screen when switching documents.
+                self.save_now();
+                self.load_document(text, path);
+            }
+            Err(e) => {
+                log::error!("could not open {}: {e}", path.display());
+                self.save_error = Some(format!("could not open {}: {e}", path.display()));
+            }
+        }
+    }
+
+    /// Replace the live document with opened text and retarget saving at it.
+    fn load_document(&mut self, text: String, path: std::path::PathBuf) {
+        // No steno stands behind opened text, so start the translator and its
+        // shadow fresh: the next stroke must append to the loaded text, not try
+        // to reconcile it against the previous document's steno output.
+        self.translator = Translator::new();
+        self.shadow = Formatted::default();
+        self.events_logged = 0;
+        self.tape.clear();
+        self.meter = crate::meter::Meter::new();
+
+        self.document.clear();
+        self.document.reconcile(&text);
+        // Writing carries on from the end of what was opened.
+        let end = self.document.text().len();
+        self.document.set_caret(end);
+        self.push_caret = true;
+        self.layout = None;
+        self.words = (
+            self.document.revision(),
+            crate::meter::count_words(self.document.text()),
+        );
+
+        // Save and autosave here from now on, and write a baseline snapshot so
+        // the state as opened is itself recoverable.
+        self.storage.choose_target(path);
+        self.save_now();
+    }
+
+    /// The top bar: open or save the live document, or choose where it lives.
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         ui.horizontal(|ui| {
+            if ui
+                .button("Open...")
+                .on_hover_text("Open an existing document and continue writing in it")
+                .clicked()
+            {
+                self.open();
+            }
             // An unnamed document has nowhere chosen to save to, so Save asks
             // first rather than quietly writing the default untitled file.
             if ui
