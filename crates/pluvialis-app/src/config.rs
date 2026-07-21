@@ -82,7 +82,7 @@ mod tests {
         let path = temp_file("roundtrip");
         let mut state = HashMap::new();
         state.insert("cb_dictionary_full.json".to_owned(), true);
-        state.insert("corien-dutch.json".to_owned(), false);
+        state.insert("dutch.json".to_owned(), false);
         state.insert("jeff-phrasing.py".to_owned(), true);
 
         save_enabled_to(&path, &state);

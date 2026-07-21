@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn every_key_name_used_in_the_real_dictionaries_resolves() {
-        // Measured across cb_dictionary_full.json and corien-dutch.json:
+        // Measured across cb_dictionary_full.json and dutch.json:
         // 201 combos, 44 distinct names.
         let measured = [
             "Control_L", "Left", "Right", "Shift", "Up", "Down", "Home", "End", "Control",

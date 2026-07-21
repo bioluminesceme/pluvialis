@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn a_dictionary_is_named_by_its_file_rather_than_its_whole_path() {
-        let path = std::path::Path::new(r"C:\Users\Corien\AppData\Local\plover\plover\cb.json");
+        let path = std::path::Path::new(r"C:\Users\you\AppData\Local\plover\plover\cb.json");
         assert_eq!(short_name(path), "cb.json");
     }
 }

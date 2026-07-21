@@ -22,5 +22,12 @@ config.toml
 /DECISIONS.md
 /thingstonote.md
 
+# Reference docs kept out of the public repo: the Stenograph USB protocol
+# write-up (kept private out of caution over what Stenograph considers
+# proprietary; the implementation stays), and the audit of the user's own
+# dictionaries (personal paths and contents).
+/reference/STENOGRAPH-PROTOCOL.md
+/reference/DICTIONARY-AUDIT.md
+
 # Generated during the jeff-phrasing differential test (M6)
 /tests/generated/

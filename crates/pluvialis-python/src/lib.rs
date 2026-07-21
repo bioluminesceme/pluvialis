@@ -57,9 +57,9 @@ pub enum PythonError {
 /// Checked **before** the module is executed, and that ordering is the whole
 /// point. Plover only ever runs a `.py` that its config names as a dictionary;
 /// Pluvialis finds them by scanning the dictionary folder, which is friendlier
-/// but means it meets files that were never meant to be dictionaries. The
-/// user's folder holds two: `backupcoriendict.py` copies a dictionary to
-/// another drive from module level, and `merge_dictionaries.py` rewrites one.
+/// but means it meets files that were never meant to be dictionaries. A real
+/// folder can hold such things: a backup script that copies a dictionary to
+/// another drive from module level, or one that rewrites a dictionary in place.
 /// Executing first and asking questions afterwards would run the copy on every
 /// start.
 ///
@@ -290,15 +290,15 @@ mod screening {
         assert!(!defines_lookup("result = do_lookup(key)\n"));
     }
 
-    /// The two real files in the user's dictionary folder that are scripts
-    /// rather than dictionaries. `backupcoriendict.py` copies a dictionary to
-    /// another drive from module level, so executing it to find out what it is
-    /// would have done that on every start.
+    /// Point this at a real dictionary folder that also holds `.py` scripts
+    /// which are not dictionaries. A backup script that copies a dictionary to
+    /// another drive from module level runs that copy just from being imported,
+    /// so screening it out without executing it is the whole point.
     #[test]
     #[ignore = "depends on files outside the repository"]
     fn it_refuses_the_scripts_in_the_users_dictionary_folder() {
-        let folder = Path::new(r"C:\Users\Corien\AppData\Local\plover\plover");
-        for name in ["backupcoriendict.py", "merge_dictionaries.py"] {
+        let folder = Path::new(r"C:\Users\you\AppData\Local\plover\plover");
+        for name in ["backup-dict.py", "merge_dictionaries.py"] {
             let source = std::fs::read_to_string(folder.join(name)).expect("reading the script");
             assert!(!defines_lookup(&source), "{name} must not be executed");
         }

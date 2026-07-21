@@ -133,7 +133,7 @@ pub fn import(source: &Path) -> Result<PathBuf, LibraryError> {
 /// Order is alphabetical by file name. That is not arbitrary and it is not
 /// clever: it is predictable, which is what matters when the user is the one
 /// putting files in the folder. It also happens to preserve the order the
-/// seeded pair had, since `cb_dictionary_full` sorts before `corien-dutch`, and
+/// seeded pair had, since `cb_dictionary_full` sorts before `dutch`, and
 /// that pair's order is load bearing (`SKP` is "and" in the English one and
 /// "en" in the Dutch one, and she confirmed the English one wins).
 ///
