@@ -1158,10 +1158,10 @@ impl LiveView {
 
 /// Where documents and their history live.
 ///
-/// Next to the executable's project folder rather than in AppData, so the user
-/// can find, back up and edit them with ordinary tools.
+/// Beside the executable rather than in AppData, so the user can find, back up
+/// and edit them with ordinary tools; see `paths`.
 fn documents_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(r"F:\Steno\Pluvialis\documents")
+    crate::paths::base_dir().join("documents")
 }
 
 /// Describe what one stroke did, for the tape.

@@ -13,11 +13,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// A sibling of the dictionary and document folders, following the same
-/// convention. Not inside `dictionaries\`, because a `.json` there would be
-/// picked up and loaded as a dictionary.
+/// Beside the executable, a sibling of the dictionary and document folders. Not
+/// inside `dictionaries\`, because a `.json` there would be picked up and loaded
+/// as a dictionary. See `paths`.
 fn path() -> PathBuf {
-    PathBuf::from(r"F:\Steno\Pluvialis\pluvialis-config.json")
+    crate::paths::base_dir().join("pluvialis-config.json")
 }
 
 /// The saved enabled state, `file name -> enabled`. An empty map on any problem

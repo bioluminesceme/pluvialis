@@ -32,9 +32,10 @@
 
 use std::path::{Path, PathBuf};
 
-/// Where Pluvialis keeps the dictionaries it owns. A sibling of `documents`.
+/// Where Pluvialis keeps the dictionaries it owns. A sibling of `documents`,
+/// beside the executable; see `paths`.
 pub fn dir() -> PathBuf {
-    PathBuf::from(r"F:\Steno\Pluvialis\dictionaries")
+    crate::paths::base_dir().join("dictionaries")
 }
 
 #[derive(Debug, thiserror::Error)]

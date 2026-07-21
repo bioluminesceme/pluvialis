@@ -13,6 +13,7 @@ mod dictionaries;
 mod library;
 mod live;
 mod meter;
+mod paths;
 mod storage;
 
 /// Reconnect to the terminal that launched us.
