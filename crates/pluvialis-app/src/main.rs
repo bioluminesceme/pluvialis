@@ -112,11 +112,17 @@ fn main() -> ExitCode {
 }
 
 fn run_gui() -> eframe::Result {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Pluvialis")
+        .with_inner_size([1000.0, 700.0])
+        .with_min_inner_size([600.0, 400.0]);
+    // Window / alt-tab icon. The pinned-taskbar icon comes from the icon
+    // embedded into the .exe by build.rs (this only covers the live window).
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")) {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Pluvialis")
-            .with_inner_size([1000.0, 700.0])
-            .with_min_inner_size([600.0, 400.0]),
+        viewport,
         ..Default::default()
     };
 
