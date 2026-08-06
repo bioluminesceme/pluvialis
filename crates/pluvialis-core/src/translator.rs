@@ -71,7 +71,7 @@ impl Delta {
 /// How many translations to retain. Only the most recent `longest_key` of them
 /// can affect a new match, so this is far more than correctness needs; it
 /// exists to bound memory and to give undo somewhere to go.
-const HISTORY_LIMIT: usize = 1000;
+pub const HISTORY_LIMIT: usize = 1000;
 
 #[derive(Default)]
 pub struct Translator {
@@ -131,7 +131,6 @@ impl Translator {
                     replaced: replaced.clone(),
                 };
                 self.history.push(translation.clone());
-                self.trim();
                 return Delta {
                     removed: replaced,
                     added: vec![translation],
@@ -146,7 +145,6 @@ impl Translator {
             replaced: Vec::new(),
         };
         self.history.push(translation.clone());
-        self.trim();
         Delta {
             removed: Vec::new(),
             added: vec![translation],
@@ -182,11 +180,24 @@ impl Translator {
             .join(" ")
     }
 
-    fn trim(&mut self) {
-        if self.history.len() > HISTORY_LIMIT {
-            let excess = self.history.len() - HISTORY_LIMIT;
-            self.history.drain(..excess);
+    /// Drop the oldest translations down to [`HISTORY_LIMIT`], and report how
+    /// many went. Returns 0 when nothing was dropped.
+    ///
+    /// **Deliberately not called by [`Translator::translate`].** Trimming
+    /// changes where the formatter's output starts, and anything diffing
+    /// consecutive `format(history)` results by common prefix (which is what
+    /// [`crate::steno_edit`] does) will read that as "delete everything, retype
+    /// everything". The caller must therefore trim at a point where it can
+    /// absorb the shift silently: format and emit for the stroke first, then
+    /// trim, then recompute its own copy of the formatter output without
+    /// emitting the difference. See `LiveView::resync_after_trim`.
+    pub fn trim_history(&mut self) -> usize {
+        if self.history.len() <= HISTORY_LIMIT {
+            return 0;
         }
+        let excess = self.history.len() - HISTORY_LIMIT;
+        self.history.drain(..excess);
+        excess
     }
 }
 

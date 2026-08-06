@@ -670,6 +670,39 @@ impl LiveView {
         // Key combos and PLOVER: commands are consumed by the output layer in
         // M5. Until then, seeing them go past confirms they are being parsed
         // out of the text rather than typed into the document.
+
+        self.resync_after_trim();
+    }
+
+    /// Bound the translator's history, then bring the shadow back into step
+    /// with it **without emitting the difference**.
+    ///
+    /// Trimming drops the oldest translations, so the formatter's output stops
+    /// starting where it did. `steno_edit` skips only a common prefix, so a
+    /// shadow left over from the untrimmed history diffs against the trimmed
+    /// one as "delete the whole session, retype the whole session": at the
+    /// 1000 translation limit that is around 5,000 backspaces and 5,000
+    /// characters, per stroke, for the rest of the session. Sent through
+    /// `SendInput` that is roughly 20,000 events per stroke, which arrives in
+    /// whatever window has focus as the entire session's text and locks the
+    /// machine up. If focus had just changed, `deliver` drops the backspaces
+    /// and only the text lands, so it reads as a pure dump.
+    ///
+    /// So the order matters and is the whole fix: the stroke's own edit is
+    /// formatted and delivered above, *then* the history is trimmed, *then*
+    /// the shadow is rebuilt here. Trimming is internal bookkeeping and must
+    /// never reach the output. `Translator::trim_history` is not called by
+    /// `translate` for this reason.
+    fn resync_after_trim(&mut self) {
+        if self.translator.trim_history() == 0 {
+            return;
+        }
+        self.shadow = format(self.translator.history());
+        // The trim only removed events from the front, so every event left in
+        // the rebuilt shadow has already been dispatched. Without this the
+        // counter would sit past the shortened list and `dispatch_events`
+        // would never fire another key combo for the rest of the session.
+        self.events_logged = self.shadow.events.len();
     }
 
     fn destination(&self) -> Destination {
