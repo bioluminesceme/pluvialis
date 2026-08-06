@@ -73,6 +73,28 @@ struct TapeEntry {
     result: String,
 }
 
+/// How many tape lines to keep.
+///
+/// The strip is an `egui::ScrollArea`, and `show` lays out every child each
+/// frame whether or not it is on screen, so an uncapped tape costs steadily
+/// more per frame the longer the session runs. The strip sticks to the bottom,
+/// so the lines dropped are always the ones that have scrolled out of reach.
+const TAPE_LIMIT: usize = 500;
+
+/// Drop the oldest tape lines once there are more than [`TAPE_LIMIT`].
+///
+/// Dropping from the front is safe here in a way it is not for the
+/// translator's history: nothing reads the tape by index or diffs it against
+/// anything, it is only iterated for display and cleared wholesale. Compare
+/// `LiveView::resync_after_trim`, where trimming the front of the *history*
+/// shifts what the formatter produces and has to be absorbed deliberately.
+fn trim_tape(tape: &mut Vec<TapeEntry>) {
+    if tape.len() > TAPE_LIMIT {
+        let excess = tape.len() - TAPE_LIMIT;
+        tape.drain(..excess);
+    }
+}
+
 pub struct LiveView {
     dictionaries: DictionaryStack,
     translator: Translator,
@@ -641,6 +663,7 @@ impl LiveView {
             outline: Stroke::render_outline(&[stroke]),
             result: describe(stroke, &delta),
         });
+        trim_tape(&mut self.tape);
         self.reformat();
     }
 
@@ -1289,6 +1312,43 @@ mod tests {
     /// Which red is used is a theme question; these tests are about where it
     /// lands.
     const RED: Color32 = RAW_COLOR_LIGHT;
+
+    fn tape_of(count: usize) -> Vec<TapeEntry> {
+        (0..count)
+            .map(|n| TapeEntry {
+                outline: format!("KAT{n}"),
+                result: n.to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_tape_keeps_the_newest_lines_and_drops_the_oldest() {
+        let mut tape = tape_of(TAPE_LIMIT + 50);
+        trim_tape(&mut tape);
+
+        assert_eq!(tape.len(), TAPE_LIMIT);
+        // The strip sticks to the bottom, so the newest line is the one that
+        // must survive. Trimming the wrong end would leave it showing the
+        // opening of the session and never updating again.
+        assert_eq!(tape.last().unwrap().result, (TAPE_LIMIT + 49).to_string());
+        assert_eq!(tape.first().unwrap().result, "50");
+    }
+
+    #[test]
+    fn a_tape_within_the_limit_is_left_alone() {
+        let mut tape = tape_of(TAPE_LIMIT);
+        trim_tape(&mut tape);
+        assert_eq!(tape.len(), TAPE_LIMIT);
+        assert_eq!(tape.first().unwrap().result, "0");
+    }
+
+    #[test]
+    fn trimming_an_empty_tape_does_nothing() {
+        let mut tape = tape_of(0);
+        trim_tape(&mut tape);
+        assert!(tape.is_empty());
+    }
 
     /// A document's worth of text and its red ranges.
     fn formatted(text: &str, raw_ranges: Vec<(usize, usize)>) -> (String, Vec<(usize, usize)>) {
