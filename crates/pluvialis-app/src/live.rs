@@ -26,11 +26,11 @@ use eframe::egui;
 use egui::text::{ByteIndex, LayoutJob, LayoutSection};
 use egui::{Color32, FontId, TextFormat};
 
+use pluvialis_core::document::StenoEdit;
 use pluvialis_core::format::{Event, Formatted, format};
 use pluvialis_core::{
     Delta, Dictionary, DictionaryStack, Document, Stroke, Translation, Translator, steno_edit,
 };
-use pluvialis_core::document::StenoEdit;
 use pluvialis_machine::{MachineEvent, MachineStatus, Scanner, all_machines};
 
 /// Where an output batch goes.
@@ -400,7 +400,8 @@ impl LiveView {
                 .current_file_name()
                 .unwrap_or_else(|| "untitled.md".to_owned());
             if self.storage.is_named() {
-                ui.label(name).on_hover_text("The file this document saves to");
+                ui.label(name)
+                    .on_hover_text("The file this document saves to");
             } else {
                 ui.weak(format!("{name} (location not chosen)"))
                     .on_hover_text("Autosaving to the default documents folder until you Save As");
@@ -658,9 +659,20 @@ impl LiveView {
     /// translator is already stroke driven, so the dev box and a real writer
     /// enter by the same door.
     pub fn apply(&mut self, stroke: Stroke) {
+        let outline = Stroke::render_outline(&[stroke]);
+        if self.focused && self.show_dictionaries && self.dictionary_pane.accept_raw_outline(stroke)
+        {
+            self.tape.push(TapeEntry {
+                outline,
+                result: "outline field".to_owned(),
+            });
+            trim_tape(&mut self.tape);
+            return;
+        }
+
         let delta = self.translator.translate(&self.dictionaries, stroke);
         self.tape.push(TapeEntry {
-            outline: Stroke::render_outline(&[stroke]),
+            outline,
             result: describe(stroke, &delta),
         });
         trim_tape(&mut self.tape);
@@ -752,7 +764,9 @@ impl LiveView {
             match event {
                 Event::KeyCombo(spec) => {
                     if destination != Destination::OtherWindow || !self.output_enabled {
-                        log::debug!("key combo {{#{spec}}} ignored: not typing into another window");
+                        log::debug!(
+                            "key combo {{#{spec}}} ignored: not typing into another window"
+                        );
                         continue;
                     }
                     match pluvialis_output::parse_combo(&spec) {

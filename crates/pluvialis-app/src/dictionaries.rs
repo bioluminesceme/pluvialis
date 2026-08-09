@@ -6,9 +6,8 @@
 //! the English one and "en" in the Dutch one). So reordering is a real editing
 //! operation, not decoration.
 //!
-//! Nothing here writes to the dictionary files. Reordering and enabling change
-//! only this session; persisting them is a separate step, and editing entries
-//! is deliberately not implemented yet.
+//! Reordering and enabling change only this session; persisting them is a
+//! separate step. Editing entries writes through `pluvialis_core::edit`.
 
 use eframe::egui;
 
@@ -35,11 +34,12 @@ pub struct DictionaryPane {
     parse_error: Option<String>,
 
     // The editor.
-    /// Which JSON dictionary a new entry is written to. Existing entries are
-    /// edited in the dictionary they already live in.
+    /// Which JSON dictionary Save writes to. Delete still finds the dictionary
+    /// that actually contains the outline.
     target: usize,
     edit_outline: String,
     edit_translation: String,
+    outline_focused: bool,
     /// The outcome of the last edit: `Ok` for a success line, `Err` for a
     /// refusal to show in red.
     edit_message: Option<Result<String, String>>,
@@ -62,9 +62,24 @@ impl DictionaryPane {
         self.last_query = None;
     }
 
+    pub fn accept_raw_outline(&mut self, stroke: Stroke) -> bool {
+        if !self.outline_focused {
+            return false;
+        }
+
+        let outline = Stroke::render_outline(&[stroke]);
+        if !self.edit_outline.trim().is_empty() && !self.edit_outline.ends_with('/') {
+            self.edit_outline.push('/');
+        }
+        self.edit_outline.push_str(&outline);
+        self.edit_message = None;
+        true
+    }
+
     /// Returns whether the enabled state or order changed this frame, so the
     /// caller can persist it.
     pub fn ui(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) -> bool {
+        self.outline_focused = false;
         ui.add_space(4.0);
         ui.strong("Dictionaries");
         ui.label(
@@ -109,10 +124,8 @@ impl DictionaryPane {
 
                 let label = egui::RichText::new(name);
                 let label = if enabled { label } else { label.weak() };
-                ui.label(label).on_hover_text(format!(
-                    "{}\n{entries} entries",
-                    entry.path.display()
-                ));
+                ui.label(label)
+                    .on_hover_text(format!("{}\n{entries} entries", entry.path.display()));
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -341,11 +354,12 @@ impl DictionaryPane {
 
         ui.horizontal(|ui| {
             ui.label("Outline");
-            ui.add(
+            let response = ui.add(
                 egui::TextEdit::singleline(&mut self.edit_outline)
                     .hint_text("PHO*EF")
                     .desired_width(f32::INFINITY),
             );
+            self.outline_focused = response.has_focus();
         });
         ui.horizontal(|ui| {
             ui.label("Word   ");
@@ -380,7 +394,10 @@ impl DictionaryPane {
                 ui.label(egui::RichText::new(text).small());
             }
             Some(Err(text)) => {
-                ui.colored_label(ui.visuals().error_fg_color, egui::RichText::new(text).small());
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    egui::RichText::new(text).small(),
+                );
             }
             None => {}
         }
@@ -389,9 +406,9 @@ impl DictionaryPane {
     fn apply_edit(&mut self, dictionaries: &mut DictionaryStack, kind: EditKind) {
         let outline = self.edit_outline.trim().to_owned();
 
-        // Editing an existing entry writes to whichever dictionary it is in;
-        // a new entry goes to the chosen target. Find the entry by parsing the
-        // outline and seeing which dictionary answers.
+        // Save writes to the chosen target, so adding an outline that already
+        // exists in another dictionary can deliberately shadow it. Delete finds
+        // the entry by parsing the outline and seeing which dictionary answers.
         let owning = Stroke::parse_outline(&outline).ok().and_then(|strokes| {
             dictionaries
                 .dictionaries()
@@ -408,19 +425,18 @@ impl DictionaryPane {
                     return;
                 }
             },
-            EditKind::Set => owning.unwrap_or(self.target),
+            EditKind::Set => self.target,
         };
 
         let path = dictionaries.dictionaries()[index].path.clone();
         let name = short_name(&path);
 
         let result = match kind {
-            EditKind::Set => set_entry(&path, &outline, &self.edit_translation).map(|_| {
-                format!("Saved {outline} to {name}")
-            }),
-            EditKind::Remove => remove_entry(&path, &outline).map(|_| {
-                format!("Removed {outline} from {name}")
-            }),
+            EditKind::Set => set_entry(&path, &outline, &self.edit_translation)
+                .map(|_| format!("Saved {outline} to {name}")),
+            EditKind::Remove => {
+                remove_entry(&path, &outline).map(|_| format!("Removed {outline} from {name}"))
+            }
         };
 
         match result {
@@ -462,10 +478,84 @@ enum EditKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    fn temp_dict(name: &str, json: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "pluvialis-pane-{name}-{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, json).unwrap();
+        path
+    }
+
+    fn read_map(path: &Path) -> BTreeMap<String, String> {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
 
     #[test]
     fn a_dictionary_is_named_by_its_file_rather_than_its_whole_path() {
         let path = std::path::Path::new(r"C:\Users\you\AppData\Local\plover\plover\cb.json");
         assert_eq!(short_name(path), "cb.json");
+    }
+
+    #[test]
+    fn saving_an_outline_that_exists_elsewhere_uses_the_selected_dictionary() {
+        let high = temp_dict("high", "{\n\"KAT\": \"cat\"\n}\n");
+        let selected = temp_dict("selected", "{\n}\n");
+        let mut stack = DictionaryStack::new();
+        stack.push(Dictionary::load(&high).unwrap());
+        stack.push(Dictionary::load(&selected).unwrap());
+
+        let mut pane = DictionaryPane {
+            target: 1,
+            edit_outline: "KAT".to_owned(),
+            edit_translation: "kitten".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.apply_edit(&mut stack, EditKind::Set);
+
+        assert_eq!(read_map(&high)["KAT"], "cat");
+        assert_eq!(read_map(&selected)["KAT"], "kitten");
+        assert!(matches!(pane.edit_message, Some(Ok(_))));
+    }
+
+    #[test]
+    fn a_focused_outline_field_accepts_raw_steno() {
+        let mut pane = DictionaryPane {
+            outline_focused: true,
+            ..DictionaryPane::new()
+        };
+        let stroke = Stroke::parse_outline("KAT").unwrap()[0];
+
+        assert!(pane.accept_raw_outline(stroke));
+        assert_eq!(pane.edit_outline, "KAT");
+    }
+
+    #[test]
+    fn raw_steno_appends_as_a_multi_stroke_outline() {
+        let mut pane = DictionaryPane {
+            edit_outline: "WEL".to_owned(),
+            outline_focused: true,
+            ..DictionaryPane::new()
+        };
+        let stroke = Stroke::parse_outline("KO*PL").unwrap()[0];
+
+        assert!(pane.accept_raw_outline(stroke));
+        assert_eq!(pane.edit_outline, "WEL/KO*PL");
+    }
+
+    #[test]
+    fn an_unfocused_outline_field_refuses_raw_steno() {
+        let mut pane = DictionaryPane::new();
+        let stroke = Stroke::parse_outline("KAT").unwrap()[0];
+
+        assert!(!pane.accept_raw_outline(stroke));
+        assert_eq!(pane.edit_outline, "");
     }
 }
