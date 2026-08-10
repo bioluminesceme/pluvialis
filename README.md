@@ -95,9 +95,11 @@ and `.py` dictionaries and refuse anything else.
   Python dictionary is arbitrary code with no sandbox, the same trust model as
   Plover.
 
-Running Python dictionaries requires **CPython 3.12 or newer** to be installed
-and findable on the DLL search path. The executable links the stable ABI
-(`python3.dll`), so any 3.12+ install works; it is not tied to one version.
+**CPython 3.12 or newer must be installed** and findable on the DLL search path.
+This is not only for Python dictionaries: the executable imports `python3.dll`
+at load time, so without CPython present Windows refuses to start Pluvialis at
+all. It links the stable ABI, so any 3.12+ install works; it is not tied to one
+version.
 
 ## Building
 
