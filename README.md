@@ -8,10 +8,27 @@ Pluvialis translates chords from a steno writer, either into its own editor or i
 
 ![The Pluvialis window: a top bar with Open, Save and Save As, an editor showing live steno text, a stroke tape on the right listing each outline and what it produced, and a status bar showing the connected writer, word count, and speed.](docs/screenshot.png)
 
+## Requirements
+
+- **Windows 10 or 11, 64-bit.** There is no Linux or macOS build. Keystroke
+  output and Stenograph USB support are written against the Win32 API.
+- **CPython 3.12 or newer**, installed and in your PATH. Pluvialis imports
+  `python3.dll` at load time, so without CPython, Windows refuses to start it at
+  all and shows a "python3.dll was not found" error. This applies even if you
+  never use a Python dictionary. Any 3.12+ install works, because Pluvialis
+  links the stable ABI rather than one specific version.
+- **Microsoft Visual C++ Redistributable (x64).** Already present on most
+  Windows machines. A "VCRUNTIME140.dll was not found" error means you need it.
+- **The Stenograph USB driver**, if you write on a Luminex CSE or another
+  Stenograph machine. Not needed for Gemini PR keyboards.
+
+The download is not code-signed, so Windows SmartScreen shows "Windows protected
+your PC" the first time you run it. Click "More info", then "Run anyway".
+
 ## How to install
 
-Click on the Releases in the right sidebar here on Github and you will find the  Zip under Assets.
-Unzip to a separate folder, for example C:\Pluvialis , and run the exe. Windows will likely warn you.
+Click on the Releases in the right sidebar here on Github and you will find the Zip under Assets.
+Unzip to a separate folder, for example `C:\Pluvialis`, and run the exe. Windows will likely warn you.
 The .exe opens the program right away, there is no installation process. You can pin the icon to your taskbar to start it easier.
 
 ## Why it exists
@@ -92,11 +109,8 @@ and `.py` dictionaries and refuse anything else.
   Python dictionary is arbitrary code with no sandbox, the same trust model as
   Plover.
 
-**CPython 3.12 or newer must be installed** and findable on the DLL search path.
-This is not only for Python dictionaries: the executable imports `python3.dll`
-at load time, so without CPython present Windows refuses to start Pluvialis at
-all. It links the stable ABI, so any 3.12+ install works; it is not tied to one
-version.
+Python dictionaries need no extra setup. The CPython install listed under
+[Requirements](#requirements) is already needed for Pluvialis to start at all.
 
 
 ## Building
