@@ -1,11 +1,10 @@
 # Pluvialis
 
-A stenography program for Windows, written in Rust.
+A fast stenography program that automatically detects connected keyboards or writers.
+Based on Plover, written in Rust.
+It runs on Windows only.
 
-Pluvialis translates chords from a steno writer into text, either into its own
-editor or into whatever other application has focus. It is aimed at people who
-write steno daily and want a tool that gets out of the way, in particular one
-that connects to the writer without a setup ritual every session.
+Pluvialis translates chords from a steno writer, either into its own editor or into whatever other application has focus.
 
 ![The Pluvialis window: a top bar with Open, Save and Save As, an editor showing live steno text, a stroke tape on the right listing each outline and what it produced, and a status bar showing the connected writer, word count, and speed.](docs/screenshot.png)
 
@@ -14,53 +13,49 @@ that connects to the writer without a setup ritual every session.
 Plover is excellent, but its Stenograph plugin cannot recover when the writer is
 not present at the moment capture starts. If the machine is off, asleep, or
 plugged in a second too late, the fix is to restart Plover and reselect the
-machine, every session. Pluvialis exists to remove that ritual: it scans for a
-writer continuously and connects the moment one appears, with no dialog and no
-machine selection.
+machine, or go back and forth and try to auto detect the port until it finally works. 
+
+Pluvialis exists to remove this annoying ritual: it scans for a
+writer continuously and connects to it the moment one appears, so you can start typing right away.
 
 Pluvialis owes a great deal to [Plover](https://github.com/openstenoproject/plover),
 the open-source stenography engine by the Open Steno Project. It is best understood
 as a partial reimplementation of Plover in Rust, with some features left out and
 some added. It is not literally a fork: the code is written fresh rather than
-branched from Plover's, and a few things behave deliberately differently. But it
-takes Plover's American English word list and its 38 orthography rules directly, so
-spelling matches, and it was built by reading Plover's source as the specification
+branched from Plover's, and a few things behave deliberately differently. But it 
+was built by reading Plover's source as the specification
 for every protocol and format. See [ATTRIBUTION.md](ATTRIBUTION.md) for exactly
 what comes from where, and the [Acknowledgements](#acknowledgements) below.
 
-The name is from *Pluvialis*, the golden-plover genus (Latin *pluvia*, rain).
+The name also heavily links to the original Plover, since the Latin *Pluvialis* is the golden-plover genus.
 
 ## Status
 
-Early but working. On the author's hardware it connects to a Luminex CSE and a
-Peregrine, translates against her real dictionaries, and renders unknown chords
-in red in the live view. The translation core loads 101,407 dictionary entries
-in about 50 ms and answers lookups in microseconds.
+Early but working well for me. It autoconnects to both my Luminex CSE and a Peregrine, 
+loads both my dictionaries, and renders unknown chords in red in the live view. 
+And it's super fast. The translation core loads 101,407 dictionary entries in about 50 ms and answers lookups in microseconds.
 
 This is version 0.1.0 and the interface is still moving. It is developed against
-one person's daily setup, so paths and assumptions elsewhere in the tree reflect
+one person's daily setup, so paths and assumptions elsewhere in the tree may reflect
 that.
+
 
 ## Features
 
 - **Continuous auto-connect.** No dialog, no machine picker. Pluvialis keeps
   scanning and connects when a supported writer appears, including after an
   unplug or a power cycle.
-- **Live editor with a caret.** Steno lands at the caret, so retroactive
-  correction works and you can write mid-document or type by hand without the
-  two fighting.
+- **Live editor with a caret.** For quick notes I wanted Pluvialis to have its own window to type in,
+  with the tape on the right side. 
 - **Untranslated chords shown in red**, attached to the characters they belong
-  to, so they survive edits until undone.
-- **Type into other applications.** When another window has focus, steno is sent
-  as real keystrokes; when Pluvialis has focus, it goes to the in-app document.
-  Never both.
-- **Open / Save / Save As**, with autosave, timestamped version history thinned
-  by age, and crash recovery.
-- **A live words-per-minute meter** measured in real words, excluding pauses, so
-  thinking does not count against the rate.
+  to, so they survive edits until undone. Saw this on YouTube, looked useful.
+- **Type into other applications.** if this is enabled, Pluvialis forwards the translated strokes to whichever window has focus.
+- **Open / Save / Save As**, with autosave, timestamped version history, and crash recovery of the markdown file (you can save this when you are typing in the Pluvialis live typing window)
+- **A live words-per-minute meter** take it as a rough estimate, I have no idea how accurate this is yet.
 - **Bring your own dictionaries.** Import Plover JSON and Python dictionaries,
   then enable, disable, reorder by priority, and look up outlines or words in the
   Dictionaries pane. Which dictionaries are enabled is remembered between runs.
+  You can change, delete and append dictionary entries.
 - **Command-line tools** for looking up outlines, checking dictionaries, and
   cleaning invalid entries.
 
@@ -68,21 +63,17 @@ that.
 
 Pluvialis auto-detects two protocol families. It tries them in this order:
 
-1. **Stenograph USB** (Windows only): the Luminex CSE and relatives.
-2. **Gemini PR** over USB serial: the Peregrine, and other keyboards or serial
-   devices that speak Gemini PR.
+1. **Stenograph USB** (Windows only): the Luminex CSE and relatives. You need to have the Stenograph USB drivers installed.
+2. **Gemini PR** over USB serial: the Peregrine, and other keyboards or serial devices that speak Gemini PR. (Should support a lot of other steno boards)
 
-If both are attached, the Stenograph writer is preferred. Other steno protocols
-(TX Bolt, Stentura, Passport, ProCAT, plain NKRO keyboard, and so on) are not
-implemented.
+If both Stenograph and Gemini PR are attached, the Stenograph writer is preferred. 
+Other steno protocols (TX Bolt, Stentura, Passport, ProCAT, plain NKRO keyboard, and so on) are not (yet) implemented.
 
 ## Dictionaries
 
 A fresh Pluvialis starts with **no dictionaries**. You add your own, and
-Pluvialis copies each into `dictionaries\` and owns that copy: the file it reads
-is one nothing else writes to, so it can never be changed underneath you by
-another program. The original you imported from is left untouched. You can edit
-the copies directly in an editor.
+Pluvialis copies each into `dictionaries\` and owns that copy. It will let you delete/change/add entries. 
+The original you imported from is left untouched. 
 
 Add a dictionary with the **Add dictionary** button in the Dictionaries pane, or
 from the command line with `pluvialis import <FILE>`. Both accept Plover `.json`
@@ -100,6 +91,7 @@ This is not only for Python dictionaries: the executable imports `python3.dll`
 at load time, so without CPython present Windows refuses to start Pluvialis at
 all. It links the stable ABI, so any 3.12+ install works; it is not tied to one
 version.
+
 
 ## Building
 
@@ -144,13 +136,13 @@ machine layer without the GUI:
 A Cargo workspace of five crates, split so that OS-specific and
 machine-specific code stays quarantined:
 
-| Crate | Responsibility |
-|---|---|
-| `pluvialis-core` | Strokes, keymaps, dictionary load and lookup, translator, formatter, undo history |
-| `pluvialis-machine` | The `Machine` trait, the Auto scanner, and each protocol |
-| `pluvialis-output` | Keystroke emulation into other applications (Win32 `SendInput`) |
-| `pluvialis-python` | Plover's Python dictionaries, run through embedded CPython |
-| `pluvialis-app` | The egui/eframe GUI, documents, autosave, versioning, and config |
+| Crate               | Responsibility                                                                    |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `pluvialis-core`    | Strokes, keymaps, dictionary load and lookup, translator, formatter, undo history |
+| `pluvialis-machine` | The `Machine` trait, the Auto scanner, and each protocol                          |
+| `pluvialis-output`  | Keystroke emulation into other applications (Win32 `SendInput`)                   |
+| `pluvialis-python`  | Plover's Python dictionaries, run through embedded CPython                        |
+| `pluvialis-app`     | The egui/eframe GUI, documents, autosave, versioning, and config                  |
 
 ## Acknowledgements
 
@@ -170,9 +162,10 @@ and some added:
   to solve, shaped how it works.
 
 Pluvialis is written independently rather than forked, but that speaks only to
-where the code came from, not to how much it owes Plover, which is a great deal.
+where the code came from, not to how much it owes Plover.
 If you want mature, cross-platform stenography that supports far more hardware,
 use Plover. It is excellent, and Pluvialis stands on its shoulders.
+If you want something fast on Windows, that auto detects your machine, try this.
 
 ## Licence
 
