@@ -19,6 +19,7 @@ config.toml
 # instructions Claude Code works from. Not published.
 /CLAUDE.md
 /PLAN.md
+/ARCHIVE.md
 /DECISIONS.md
 /thingstonote.md
 
