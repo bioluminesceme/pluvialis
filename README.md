@@ -8,6 +8,12 @@ Pluvialis translates chords from a steno writer, either into its own editor or i
 
 ![The Pluvialis window: a top bar with Open, Save and Save As, an editor showing live steno text, a stroke tape on the right listing each outline and what it produced, and a status bar showing the connected writer, word count, and speed.](docs/screenshot.png)
 
+## How to install
+
+Click on the Releases in the right sidebar here on Github and you will find the  Zip under Assets.
+Unzip to a separate folder, for example C:\Pluvialis , and run the exe. Windows will likely warn you.
+The .exe opens the program right away, there is no installation process. You can pin the icon to your taskbar to start it easier.
+
 ## Why it exists
 
 Plover is excellent, but its Stenograph plugin cannot recover when the writer is
