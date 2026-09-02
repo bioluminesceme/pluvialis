@@ -175,34 +175,32 @@ impl DictionaryPane {
             changed = true;
         }
 
-        // Dictionaries that compute their answers (Python). Consulted only
-        // after every JSON one has missed, so they sit below the list rather
-        // than in it, and they are off until the user turns them on.
-        let programmatic = dictionaries.programmatic().len();
-        if programmatic > 0 {
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new("Programmatic, consulted last")
-                    .small()
-                    .weak(),
-            );
+        // Dictionaries that compute their answers rather than storing them
+        // (Python). They sit in the same list, because to the user they are
+        // dictionaries like any other and she wants one place to switch things
+        // on and off. They keep no arrows: they are consulted only after every
+        // stored dictionary has missed, so they have no position to move.
+        for index in 0..dictionaries.programmatic().len() {
+            ui.horizontal(|ui| {
+                let entry = &mut dictionaries.programmatic_mut()[index];
+                let mut enabled = entry.is_enabled();
+                if ui.checkbox(&mut enabled, "").changed() {
+                    entry.set_enabled(enabled);
+                    changed = true;
+                }
 
-            for index in 0..programmatic {
-                ui.horizontal(|ui| {
-                    let entry = &mut dictionaries.programmatic_mut()[index];
-                    let mut enabled = entry.is_enabled();
-                    if ui.checkbox(&mut enabled, "").changed() {
-                        entry.set_enabled(enabled);
-                        changed = true;
-                    }
-                    let label = egui::RichText::new(entry.name());
-                    let label = if enabled { label } else { label.weak() };
-                    ui.label(label).on_hover_text(
-                        "Runs as written. A Python dictionary is not sandboxed, \
-                         which is the same trust model as Plover.",
-                    );
+                let label = egui::RichText::new(entry.name());
+                let label = if enabled { label } else { label.weak() };
+                ui.label(label).on_hover_text(
+                    "A Python dictionary: it works out its answers instead of                      looking them up, so it has no entries to browse or edit.                      Consulted only after every other dictionary has missed,                      which is why it has no position to move.
+
+It runs as                      written and is not sandboxed, the same trust model as                      Plover.",
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new("python").small().weak());
                 });
-            }
+            });
         }
 
         changed
