@@ -933,22 +933,7 @@ impl LiveView {
             })
             .inner;
 
-        if let crate::dictionary_screen::Action::Load(id) = action {
-            // Copied out before the editor is touched, so the index is not
-            // still borrowed when the pane takes it.
-            let entry = self.entry_index.entry(id).and_then(|entry| {
-                self.entry_index.path(entry.dictionary).map(|path| {
-                    (
-                        path.to_path_buf(),
-                        entry.outline.clone(),
-                        entry.word.clone(),
-                    )
-                })
-            });
-            if let Some((path, outline, word)) = entry {
-                self.dictionary_pane.load_entry(&path, &outline, &word);
-            }
-        }
+        entries_changed |= self.dictionary_action(action);
 
         if add_clicked {
             self.add_dictionaries();
@@ -964,13 +949,64 @@ impl LiveView {
         }
     }
 
+    /// Carry out what the table asked for. Everything is copied out of the
+    /// index first, so it is not still borrowed when the dictionaries are
+    /// written to.
+    ///
+    /// Returns whether any entry changed.
+    fn dictionary_action(&mut self, action: crate::dictionary_screen::Action) -> bool {
+        use crate::dictionary_screen::Action;
+
+        match action {
+            Action::None => false,
+            Action::Load(id) => {
+                if let Some((path, outline, word)) = self.entry_at(id) {
+                    self.dictionary_pane.load_entry(&path, &outline, &word);
+                }
+                false
+            }
+            Action::Delete(ids) => {
+                let entries: Vec<(std::path::PathBuf, String)> = ids
+                    .iter()
+                    .filter_map(|id| self.entry_at(*id))
+                    .map(|(path, outline, _)| (path, outline))
+                    .collect();
+                self.dictionary_pane
+                    .delete_entries(&mut self.dictionaries, &entries)
+            }
+            Action::Swap(first, second) => {
+                let (Some(first), Some(second)) = (self.entry_at(first), self.entry_at(second))
+                else {
+                    return false;
+                };
+                self.dictionary_pane.swap_with(
+                    &mut self.dictionaries,
+                    &first.0,
+                    &first.1,
+                    &second.1,
+                )
+            }
+        }
+    }
+
+    /// One entry from the table, as file, outline and word.
+    fn entry_at(&self, id: u32) -> Option<(std::path::PathBuf, String, String)> {
+        let entry = self.entry_index.entry(id)?;
+        let path = self.entry_index.path(entry.dictionary)?;
+        Some((
+            path.to_path_buf(),
+            entry.outline.clone(),
+            entry.word.clone(),
+        ))
+    }
+
     /// Reread every entry for the table. Only after the entries themselves
     /// change: enabling, disabling and reordering do not touch them.
     fn rebuild_entry_index(&mut self) {
         self.entry_index.rebuild(&self.dictionaries);
         // The ids the table hands out are positions in the index, so a rebuild
         // invalidates whatever was highlighted.
-        self.dictionary_screen.select(None);
+        self.dictionary_screen.clear_selection();
     }
 
     /// Windows floating above whichever screen is showing.

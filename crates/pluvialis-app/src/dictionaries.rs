@@ -17,12 +17,14 @@
 //! unambiguous place that accepts raw steno from the writer, which a grid of a
 //! hundred thousand possibly-steno cells would destroy.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
 use pluvialis_core::{
-    Dictionary, DictionaryStack, Stroke, move_entry, remove_entry, set_entry, swap_entries,
+    Dictionary, DictionaryStack, Stroke, move_entry, remove_entries, remove_entry, set_entry,
+    swap_entries,
 };
 
 /// The entry the editor is working on, once one has been loaded from the table.
@@ -37,16 +39,6 @@ struct Loaded {
     /// The outline as it was when the entry was loaded, which is what a move
     /// starts from.
     outline: String,
-}
-
-/// An outline one key away from the loaded one, and what it writes today.
-struct Variant {
-    path: PathBuf,
-    dictionary: String,
-    outline: String,
-    word: String,
-    /// Only a swap within one file is a single verified write.
-    same_file: bool,
 }
 
 #[derive(Default)]
@@ -329,81 +321,11 @@ impl DictionaryPane {
             None => {}
         }
 
-        changed |= self.star_variants(ui, dictionaries);
         changed
     }
 
-    /// Outlines one key away from the loaded one, with a button to exchange
-    /// their words.
-    ///
-    /// This is the reason the feature exists. `KAT` and `KA*T` are the same
-    /// chord with one extra key, and the starred one is harder to write, so
-    /// whichever word is written more often should own the plain outline.
-    /// Swapping them is a deliberate tuning step, not a repair.
-    fn star_variants(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) -> bool {
-        let Some(loaded) = self.loaded.clone() else {
-            return false;
-        };
-        let Ok(strokes) = Stroke::parse_outline(&loaded.outline) else {
-            return false;
-        };
-
-        let mut variants: Vec<Variant> = Vec::new();
-        for variant in Stroke::star_variants(&strokes) {
-            let outline = Stroke::render_outline(&variant);
-            for dictionary in dictionaries.dictionaries() {
-                if let Some(word) = dictionary.lookup(&variant) {
-                    variants.push(Variant {
-                        path: dictionary.path.clone(),
-                        dictionary: short_name(&dictionary.path),
-                        outline: outline.clone(),
-                        word: word.to_owned(),
-                        same_file: dictionary.path == loaded.path,
-                    });
-                }
-            }
-        }
-        if variants.is_empty() {
-            return false;
-        }
-
-        // Collected in the closure and acted on after it, so the swap does not
-        // need a mutable borrow of the pane while the rows are being drawn.
-        let mut swap: Option<(PathBuf, String)> = None;
-        ui.add_space(2.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(
-                egui::RichText::new(format!("One key away from {}:", loaded.outline))
-                    .small()
-                    .weak(),
-            );
-
-            for variant in &variants {
-                ui.label(egui::RichText::new(&variant.outline).monospace());
-                ui.label(format!("{:?}", variant.word));
-                ui.label(egui::RichText::new(&variant.dictionary).small().weak());
-                let hover = match variant.same_file {
-                    true => "Exchange the words these two outlines write",
-                    false => "Both entries must be in the same dictionary.",
-                };
-                if ui
-                    .add_enabled(variant.same_file, egui::Button::new("Swap").small())
-                    .on_hover_text(hover)
-                    .clicked()
-                {
-                    swap = Some((variant.path.clone(), variant.outline.clone()));
-                }
-            }
-        });
-
-        let Some((path, second)) = swap else {
-            return false;
-        };
-        self.swap_with(dictionaries, &path, &loaded.outline, &second)
-    }
-
     /// Exchange the words two outlines write, in one verified write.
-    fn swap_with(
+    pub fn swap_with(
         &mut self,
         dictionaries: &mut DictionaryStack,
         path: &Path,
@@ -427,6 +349,53 @@ impl DictionaryPane {
                 false
             }
         }
+    }
+
+    /// Remove several entries, one verified write per file.
+    ///
+    /// Grouped by file rather than looped one at a time: fourteen entries
+    /// through `remove_entry` would be fourteen reads, fourteen reparses of a
+    /// 93,000 line file and fourteen backups to wade through when undoing.
+    pub fn delete_entries(
+        &mut self,
+        dictionaries: &mut DictionaryStack,
+        entries: &[(PathBuf, String)],
+    ) -> bool {
+        let mut by_file: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+        for (path, outline) in entries {
+            by_file
+                .entry(path.clone())
+                .or_default()
+                .push(outline.clone());
+        }
+
+        let mut removed = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+        for (path, outlines) in &by_file {
+            let borrowed: Vec<&str> = outlines.iter().map(String::as_str).collect();
+            match remove_entries(path, &borrowed) {
+                Ok(report) => {
+                    removed += report.removed.len();
+                    self.reload(dictionaries, path);
+                }
+                Err(e) => failures.push(format!("{}: {e}", short_name(path))),
+            }
+        }
+
+        // The loaded entry may have been one of them.
+        if let Some(loaded) = &self.loaded
+            && entries
+                .iter()
+                .any(|(path, outline)| *path == loaded.path && *outline == loaded.outline)
+        {
+            self.clear_editor();
+        }
+
+        self.edit_message = match failures.is_empty() {
+            true => Some(Ok(format!("Removed {removed} entries"))),
+            false => Some(Err(failures.join("; "))),
+        };
+        removed > 0
     }
 
     /// Clear the outline field whenever it regains focus.
@@ -569,7 +538,6 @@ enum EditKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     fn temp_dict(name: &str, json: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
