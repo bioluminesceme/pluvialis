@@ -22,6 +22,6 @@ pub mod translator;
 pub use clean::{CleanError, CleanReport, clean_dictionary};
 pub use dictionary::{Dictionary, DictionaryError, DictionaryStack, ProgrammaticDictionary};
 pub use document::{Document, StenoEdit, steno_edit};
-pub use edit::{EditError, EditReport, remove_entry, set_entry};
+pub use edit::{EditError, EditReport, move_entry, remove_entry, set_entry};
 pub use stroke::{Stroke, StrokeError};
 pub use translator::{Delta, Translation, Translator};

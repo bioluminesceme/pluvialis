@@ -51,6 +51,11 @@ pub enum EditError {
     },
     #[error("{outline:?} is not in {path}")]
     NotFound { outline: String, path: PathBuf },
+    /// Moving an entry onto an outline another entry already uses. Refused
+    /// rather than merged, because the entry it would overwrite is not the one
+    /// being edited and the user never asked to lose it.
+    #[error("{outline:?} already exists in {path}")]
+    AlreadyExists { outline: String, path: PathBuf },
     /// The rewrite produced something other than the dictionary intended.
     /// Nothing has been written when this is returned.
     #[error("refusing to write {path}: {reason}")]
@@ -84,7 +89,10 @@ pub fn set_entry(
 
     let text = read(&path)?;
     let entries = parse(&path, &text)?;
-    let previous = entries.get(outline).cloned();
+    // The line to edit is the one the file already has, which is not always
+    // spelled the way the caller spelled it. See `stored_key`.
+    let key = stored_key(&entries, outline).unwrap_or_else(|| outline.to_owned());
+    let previous = entries.get(&key).cloned();
 
     // Already exactly this. Do not rewrite the file or make a backup for a
     // no-op; an autosave-like editor could otherwise spray backups.
@@ -97,10 +105,11 @@ pub fn set_entry(
     }
 
     let updated = if previous.is_some() {
-        replace_value(&text, outline, translation)
-            .ok_or_else(|| verification_failed(&path, "could not locate the entry line to replace"))?
+        replace_value(&text, &key, translation).ok_or_else(|| {
+            verification_failed(&path, "could not locate the entry line to replace")
+        })?
     } else {
-        insert_entry(&text, outline, translation, entries.is_empty())
+        insert_entry(&text, &key, translation, entries.is_empty())
             .ok_or_else(|| verification_failed(&path, "could not find where to insert the entry"))?
     };
 
@@ -110,8 +119,8 @@ pub fn set_entry(
     } else {
         entries.len() + 1
     };
-    verify_untouched(&path, &entries, &reparsed, outline, expected)?;
-    if reparsed.get(outline).map(String::as_str) != Some(translation) {
+    verify_untouched(&path, &entries, &reparsed, &[&key], expected)?;
+    if reparsed.get(&key).map(String::as_str) != Some(translation) {
         return Err(verification_failed(
             &path,
             &format!("{outline:?} was not written correctly"),
@@ -132,20 +141,21 @@ pub fn remove_entry(path: impl AsRef<Path>, outline: &str) -> Result<EditReport,
 
     let text = read(&path)?;
     let entries = parse(&path, &text)?;
-    let Some(previous) = entries.get(outline).cloned() else {
+    let Some(key) = stored_key(&entries, outline) else {
         return Err(EditError::NotFound {
             outline: outline.to_owned(),
             path,
         });
     };
+    let previous = entries[&key].clone();
 
     let mut remove = BTreeMap::new();
-    remove.insert(outline.to_owned(), previous.clone());
+    remove.insert(key.clone(), previous.clone());
     let updated = strip_keys(&text, &remove);
 
     let reparsed = parse_verify(&path, &updated)?;
-    verify_untouched(&path, &entries, &reparsed, outline, entries.len() - 1)?;
-    if reparsed.contains_key(outline) {
+    verify_untouched(&path, &entries, &reparsed, &[&key], entries.len() - 1)?;
+    if reparsed.contains_key(&key) {
         return Err(verification_failed(
             &path,
             &format!("{outline:?} is still present after removal"),
@@ -160,13 +170,109 @@ pub fn remove_entry(path: impl AsRef<Path>, outline: &str) -> Result<EditReport,
     })
 }
 
+/// Change an entry's outline, and its translation at the same time.
+///
+/// One write, one backup, one verification, rather than a remove followed by an
+/// add. Two writes can half-succeed, and the failure mode is the entry existing
+/// twice or not at all, in the only copy of the user's vocabulary.
+///
+/// Refuses if `to` is already used by a different entry: overwriting it would
+/// lose a translation the user did not ask to lose.
+pub fn move_entry(
+    path: impl AsRef<Path>,
+    from: &str,
+    to: &str,
+    translation: &str,
+) -> Result<EditReport, EditError> {
+    let path = path.as_ref().to_path_buf();
+
+    Stroke::parse_outline(to).map_err(|source| EditError::InvalidOutline {
+        outline: to.to_owned(),
+        source,
+    })?;
+
+    let text = read(&path)?;
+    let entries = parse(&path, &text)?;
+    let Some(from_key) = stored_key(&entries, from) else {
+        return Err(EditError::NotFound {
+            outline: from.to_owned(),
+            path,
+        });
+    };
+    let previous = entries[&from_key].clone();
+
+    // Same strokes, only the value changed (or nothing did). `set_entry`
+    // already handles that exactly, including the no-op case.
+    let to_key = stored_key(&entries, to);
+    if to_key.as_deref() == Some(from_key.as_str()) {
+        return set_entry(&path, &from_key, translation);
+    }
+    if let Some(existing) = to_key {
+        return Err(EditError::AlreadyExists {
+            outline: existing,
+            path,
+        });
+    }
+
+    let mut remove = BTreeMap::new();
+    remove.insert(from_key.clone(), previous.clone());
+    let stripped = strip_keys(&text, &remove);
+    // The stripped dictionary is empty when the moved entry was the only one,
+    // and then the inserted line must not carry a trailing comma.
+    let updated = insert_entry(&stripped, to, translation, entries.len() == 1)
+        .ok_or_else(|| verification_failed(&path, "could not find where to insert the entry"))?;
+
+    let reparsed = parse_verify(&path, &updated)?;
+    verify_untouched(&path, &entries, &reparsed, &[&from_key, to], entries.len())?;
+    if reparsed.contains_key(&from_key) {
+        return Err(verification_failed(
+            &path,
+            &format!("{from_key:?} is still present after the move"),
+        ));
+    }
+    if reparsed.get(to).map(String::as_str) != Some(translation) {
+        return Err(verification_failed(
+            &path,
+            &format!("{to:?} was not written correctly"),
+        ));
+    }
+
+    let backup = write_with_backup(&path, &text, &updated)?;
+    Ok(EditReport {
+        path,
+        previous: Some(previous),
+        backup: Some(backup),
+    })
+}
+
+/// The key text this file actually stores for `outline`, if any.
+///
+/// A dictionary is free to spell a key any way that parses: `TK-LS` and `TKLS`
+/// are the same outline, and only one of them is on disk. Edits have to touch
+/// the line that is there. Resolving by exact text alone means a save adds a
+/// second entry for strokes that already have one, and a delete reports an
+/// entry that is plainly visible in the lookup as missing.
+///
+/// Exact text first, since that is the common case and costs one hash. The
+/// scan only runs when it misses.
+fn stored_key(entries: &BTreeMap<String, String>, outline: &str) -> Option<String> {
+    if entries.contains_key(outline) {
+        return Some(outline.to_owned());
+    }
+    let wanted = Stroke::parse_outline(outline).ok()?;
+    entries
+        .keys()
+        .find(|key| Stroke::parse_outline(key).is_ok_and(|parsed| parsed == wanted))
+        .cloned()
+}
+
 /// Check the count is right and that every entry other than the edited one is
 /// byte-for-byte what it was.
 fn verify_untouched(
     path: &Path,
     original: &BTreeMap<String, String>,
     reparsed: &BTreeMap<String, String>,
-    edited: &str,
+    edited: &[&str],
     expected_len: usize,
 ) -> Result<(), EditError> {
     if reparsed.len() != expected_len {
@@ -176,7 +282,7 @@ fn verify_untouched(
         ));
     }
     for (key, value) in reparsed {
-        if key == edited {
+        if edited.contains(&key.as_str()) {
             continue;
         }
         if original.get(key) != Some(value) {
@@ -425,7 +531,10 @@ mod tests {
     fn removing_the_last_entry_repairs_the_trailing_comma() {
         let path = temp("removelast", "{\n\"KAT\": \"cat\",\n\"TKOG\": \"dog\"\n}\n");
         remove_entry(&path, "TKOG").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\n\"KAT\": \"cat\"\n}\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\n\"KAT\": \"cat\"\n}\n"
+        );
     }
 
     #[test]
@@ -461,5 +570,112 @@ mod tests {
         let path = temp("empty", "{\n}\n");
         set_entry(&path, "KAT", "cat").unwrap();
         assert_eq!(read_map(&path).len(), 1);
+    }
+
+    #[test]
+    fn an_entry_is_found_however_its_key_is_spelled() {
+        // TK-LS and TKLS are the same strokes. Only one of them is in the file.
+        let path = temp("spelling", "{\n\"TK-LS\": \"tools\"\n}\n");
+        let report = set_entry(&path, "TKLS", "gadgets").unwrap();
+
+        assert_eq!(report.previous.as_deref(), Some("tools"));
+        let map = read_map(&path);
+        assert_eq!(
+            map.len(),
+            1,
+            "no second entry for strokes that already have one"
+        );
+        assert_eq!(map["TK-LS"], "gadgets");
+    }
+
+    #[test]
+    fn a_differently_spelled_key_can_still_be_removed() {
+        let path = temp("spellingremove", "{\n\"TK-LS\": \"tools\"\n}\n");
+        remove_entry(&path, "TKLS").unwrap();
+        assert!(read_map(&path).is_empty());
+    }
+
+    #[test]
+    fn moving_an_entry_changes_its_outline_and_keeps_the_others() {
+        let path = temp("move", "{\n\"KAT\": \"cat\",\n\"TKOG\": \"dog\"\n}\n");
+        let report = move_entry(&path, "KAT", "KAERT", "cat").unwrap();
+
+        assert_eq!(report.previous.as_deref(), Some("cat"));
+        let map = read_map(&path);
+        assert_eq!(map.len(), 2);
+        assert!(!map.contains_key("KAT"));
+        assert_eq!(map["KAERT"], "cat");
+        assert_eq!(map["TKOG"], "dog");
+    }
+
+    #[test]
+    fn a_move_can_change_the_translation_at_the_same_time() {
+        let path = temp("movevalue", "{\n\"KAT\": \"cat\"\n}\n");
+        move_entry(&path, "KAT", "KAETS", "cats").unwrap();
+
+        let map = read_map(&path);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["KAETS"], "cats");
+    }
+
+    #[test]
+    fn a_move_onto_the_same_outline_is_just_a_value_change() {
+        let path = temp("moveself", "{\n  \"KAT\": \"cat\"\n}\n");
+        move_entry(&path, "KAT", "KAT", "kitten").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\n  \"KAT\": \"kitten\"\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_move_refuses_to_overwrite_another_entry() {
+        let contents = "{\n\"KAT\": \"cat\",\n\"TKOG\": \"dog\"\n}\n";
+        let path = temp("moveclash", contents);
+        assert!(matches!(
+            move_entry(&path, "KAT", "TKOG", "cat"),
+            Err(EditError::AlreadyExists { .. })
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    }
+
+    #[test]
+    fn moving_an_entry_that_is_not_there_touches_nothing() {
+        let contents = "{\n\"KAT\": \"cat\"\n}\n";
+        let path = temp("movemissing", contents);
+        assert!(matches!(
+            move_entry(&path, "TKOG", "TKOGS", "dogs"),
+            Err(EditError::NotFound { .. })
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    }
+
+    #[test]
+    fn a_move_to_an_unstrokeable_outline_is_refused_before_writing() {
+        let contents = "{\n\"KAT\": \"cat\"\n}\n";
+        let path = temp("movebad", contents);
+        assert!(matches!(
+            move_entry(&path, "KAT", "not valid steno!!", "cat"),
+            Err(EditError::InvalidOutline { .. })
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    }
+
+    #[test]
+    fn moving_the_only_entry_leaves_valid_json() {
+        let path = temp("moveonly", "{\n\"KAT\": \"cat\"\n}\n");
+        move_entry(&path, "KAT", "KAERT", "cat").unwrap();
+        let map = read_map(&path);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["KAERT"], "cat");
+    }
+
+    #[test]
+    fn a_move_is_reversible_from_its_backup() {
+        let contents = "{\n\"KAT\": \"cat\"\n}\n";
+        let path = temp("movebackup", contents);
+        let report = move_entry(&path, "KAT", "KAERT", "cat").unwrap();
+        let backup = std::fs::read_to_string(report.backup.unwrap()).unwrap();
+        assert_eq!(backup, contents);
     }
 }

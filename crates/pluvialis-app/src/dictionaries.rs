@@ -8,19 +8,46 @@
 //!
 //! Reordering and enabling change only this session; persisting them is a
 //! separate step. Editing entries writes through `pluvialis_core::edit`.
+//!
+//! A lookup answers both questions at once: what an outline means, and every
+//! way a word can be written. Both directions run for every query, because a
+//! great many words are also valid steno ("the", "to", "pro", "hat"), and
+//! answering only the direction the query happens to parse as hides the other
+//! one with no sign that it was skipped.
+
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use pluvialis_core::{Dictionary, DictionaryStack, Stroke, remove_entry, set_entry};
+use pluvialis_core::{Dictionary, DictionaryStack, Stroke, move_entry, remove_entry, set_entry};
 
-/// One answer to a lookup, and which file it came from.
+/// One entry a lookup found, and the file it lives in.
 struct Hit {
-    /// Index into the JSON dictionaries, so clicking a hit can edit it in place.
-    dict_index: usize,
+    /// Which file to edit. A path rather than an index, because the list can be
+    /// reordered between finding the entry and clicking it.
+    path: PathBuf,
     dictionary: String,
+    /// Canonical rendering. The file may spell its key differently (`TK-LS` for
+    /// `TKLS`); `pluvialis_core::edit` resolves that when it writes.
+    outline: String,
     value: String,
-    /// Whether this is the one the translator would actually use.
+    /// Whether this is the entry the translator would actually use for these
+    /// strokes. The others are shadowed by priority order, or disabled.
     winning: bool,
+}
+
+/// The entry the editor is working on, once one has been loaded from a result.
+///
+/// Held separately from the text fields so the fields can be edited, or
+/// cleared, without losing which entry is being changed. That is what makes
+/// changing an outline a move rather than an add.
+#[derive(Clone)]
+struct Loaded {
+    path: PathBuf,
+    dictionary: String,
+    /// The outline as it was when the entry was loaded, which is what a move
+    /// starts from.
+    outline: String,
 }
 
 #[derive(Default)]
@@ -29,14 +56,15 @@ pub struct DictionaryPane {
     /// Recomputed only when the query or the stack changes, since a reverse
     /// lookup walks every entry in every dictionary.
     forward: Vec<Hit>,
-    reverse: Vec<String>,
+    reverse: Vec<Hit>,
     last_query: Option<String>,
     parse_error: Option<String>,
 
     // The editor.
-    /// Which JSON dictionary Save writes to. Delete still finds the dictionary
-    /// that actually contains the outline.
+    /// Which JSON dictionary a brand new entry goes into. Ignored once an
+    /// existing entry is loaded, which is edited where it already lives.
     target: usize,
+    loaded: Option<Loaded>,
     edit_outline: String,
     edit_translation: String,
     outline_focused: bool,
@@ -50,6 +78,18 @@ fn short_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Whether `path` is the dictionary the translator answers these strokes from.
+///
+/// Not "holds the same text as the winner": two dictionaries can hold the same
+/// translation, and only one of them is the one being used.
+fn is_winner(dictionaries: &DictionaryStack, path: &Path, strokes: &[Stroke]) -> bool {
+    dictionaries
+        .dictionaries()
+        .iter()
+        .find(|d| d.enabled && d.lookup(strokes).is_some())
+        .is_some_and(|d| d.path == path)
 }
 
 impl DictionaryPane {
@@ -202,67 +242,47 @@ impl DictionaryPane {
             ui.label(egui::RichText::new(error).small().weak());
         }
 
-        // What a clicked result should load into the editor below:
-        // (dictionary to target, outline, translation). Collected here and
-        // applied after the loop, since the loop only borrows the results.
-        let mut fill: Option<(Option<usize>, String, String)> = None;
+        // Which entry a clicked row should load into the editor. Collected here
+        // and applied after the loop, since the loop only borrows the results.
+        let mut fill: Option<Loaded> = None;
+        let mut fill_value = String::new();
 
         // Capped so the editor below stays on screen; the results scroll within.
         egui::ScrollArea::vertical()
-            .max_height(180.0)
+            .max_height(220.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 if !self.forward.is_empty() {
                     ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Means").small().weak());
                     for hit in &self.forward {
-                        ui.horizontal_wrapped(|ui| {
-                            let value = egui::RichText::new(format!("{:?}", hit.value));
-                            // The winning entry is what the translator uses;
-                            // the rest are shadowed by priority order.
-                            let value = match hit.winning {
-                                true => value.strong(),
-                                false => value.weak(),
-                            };
-                            if ui
-                                .add(egui::Label::new(value).sense(egui::Sense::click()))
-                                .on_hover_text("Click to load into the editor below")
-                                .clicked()
-                            {
-                                fill = Some((
-                                    Some(hit.dict_index),
-                                    self.query.clone(),
-                                    hit.value.clone(),
-                                ));
-                            }
-                            ui.label(egui::RichText::new(&hit.dictionary).small().weak());
-                        });
+                        if row(ui, hit) {
+                            fill = Some(hit.into());
+                            fill_value = hit.value.clone();
+                        }
                     }
                 }
 
                 if !self.reverse.is_empty() {
                     ui.add_space(6.0);
-                    ui.label(egui::RichText::new("Written as").small().weak());
-                    for outline in &self.reverse {
-                        if ui
-                            .add(
-                                egui::Label::new(egui::RichText::new(outline).monospace())
-                                    .sense(egui::Sense::click()),
-                            )
-                            .on_hover_text("Click to load into the editor below")
-                            .clicked()
-                        {
-                            fill = Some((None, outline.clone(), self.query.clone()));
+                    ui.label(
+                        egui::RichText::new(format!("Written as ({})", self.reverse.len()))
+                            .small()
+                            .weak(),
+                    );
+                    for hit in &self.reverse {
+                        if row(ui, hit) {
+                            fill = Some(hit.into());
+                            fill_value = hit.value.clone();
                         }
                     }
                 }
             });
 
-        if let Some((target, outline, translation)) = fill {
-            if let Some(index) = target {
-                self.target = index;
-            }
-            self.edit_outline = outline;
-            self.edit_translation = translation;
+        if let Some(loaded) = fill {
+            self.edit_outline = loaded.outline.clone();
+            self.edit_translation = fill_value;
+            self.loaded = Some(loaded);
             self.edit_message = None;
         }
     }
@@ -278,51 +298,62 @@ impl DictionaryPane {
             return;
         }
 
-        // An outline, if it parses as one. Most queries that are not steno fail
-        // here, which is expected and not worth reporting: "cat" is a perfectly
-        // good reverse lookup and a hopeless outline.
-        match Stroke::parse_outline(query) {
-            Ok(strokes) => {
-                let winner = dictionaries.lookup(&strokes);
-                for (index, dictionary) in dictionaries.dictionaries().iter().enumerate() {
-                    if let Some(value) = dictionary.lookup(&strokes) {
-                        self.forward.push(Hit {
-                            dict_index: index,
-                            dictionary: short_name(&dictionary.path),
-                            value: value.to_owned(),
-                            winning: dictionary.enabled && winner == Some(value),
-                        });
-                    }
-                }
-                if self.forward.is_empty() {
-                    self.parse_error = Some("No entry for that outline".to_owned());
-                }
-            }
-            Err(_) => {
-                // Reverse lookup covers the "how do I write this word" case.
-                for dictionary in dictionaries.dictionaries() {
-                    for outline in dictionary.reverse_lookup(query) {
-                        let rendered = Stroke::render_outline(outline);
-                        if !self.reverse.contains(&rendered) {
-                            self.reverse.push(rendered);
-                        }
-                    }
-                }
-                if self.reverse.is_empty() {
-                    self.parse_error =
-                        Some("Not valid steno, and no entry produces that text".to_owned());
+        // What the outline means, when the query is one. Most queries that are
+        // not steno fail here, which is expected: "cat" is a perfectly good
+        // reverse lookup and a hopeless outline.
+        let parsed = Stroke::parse_outline(query).ok();
+        if let Some(strokes) = &parsed {
+            let outline = Stroke::render_outline(strokes);
+            for dictionary in dictionaries.dictionaries() {
+                if let Some(value) = dictionary.lookup(strokes) {
+                    self.forward.push(Hit {
+                        path: dictionary.path.clone(),
+                        dictionary: short_name(&dictionary.path),
+                        outline: outline.clone(),
+                        value: value.to_owned(),
+                        winning: is_winner(dictionaries, &dictionary.path, strokes),
+                    });
                 }
             }
         }
 
-        // Shortest first: the brief is what the user wants to learn.
-        self.reverse.sort_by_key(|outline| outline.len());
-        self.reverse.truncate(20);
+        // Every way the query can be written. Runs whether or not the query
+        // parsed as steno, so a word that is also a valid outline still shows
+        // its strokes.
+        for dictionary in dictionaries.dictionaries() {
+            for (outline, value) in dictionary.reverse_lookup(query) {
+                self.reverse.push(Hit {
+                    path: dictionary.path.clone(),
+                    dictionary: short_name(&dictionary.path),
+                    outline: Stroke::render_outline(outline),
+                    value: value.to_owned(),
+                    winning: is_winner(dictionaries, &dictionary.path, outline),
+                });
+            }
+        }
+
+        // Entries that match the query exactly come first, then shortest
+        // outline: the brief is what the user wants to learn, and an entry that
+        // differs in capitalisation is a weaker answer than one that does not.
+        self.reverse.sort_by(|a, b| {
+            (a.value != query)
+                .cmp(&(b.value != query))
+                .then(a.outline.len().cmp(&b.outline.len()))
+                .then(a.outline.cmp(&b.outline))
+        });
+
+        if self.forward.is_empty() && self.reverse.is_empty() {
+            self.parse_error = Some(match parsed {
+                Some(_) => "No entry for that outline, and nothing is written that way".to_owned(),
+                None => "Not valid steno, and no entry produces that text".to_owned(),
+            });
+        }
     }
 
-    /// Add, change or remove an entry. Writes go to Pluvialis's own dictionary
-    /// copies, never the user's Plover folder, and every write backs up the
-    /// file first and is verified before it lands; see `pluvialis_core::edit`.
+    /// Add, change, move or remove an entry. Writes go to Pluvialis's own
+    /// dictionary copies, never the user's Plover folder, and every write backs
+    /// up the file first and is verified before it lands; see
+    /// `pluvialis_core::edit`.
     fn editor(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) {
         let names: Vec<String> = dictionaries
             .dictionaries()
@@ -341,24 +372,58 @@ impl DictionaryPane {
             self.target = 0;
         }
 
-        ui.horizontal(|ui| {
-            ui.label("New entries in");
-            egui::ComboBox::from_id_salt("edit-target")
-                .selected_text(names[self.target].clone())
-                .show_ui(ui, |ui| {
-                    for (index, name) in names.iter().enumerate() {
-                        ui.selectable_value(&mut self.target, index, name);
+        // A loaded entry is edited where it already lives, so there is nothing
+        // to choose. Only a new entry needs a destination.
+        match self.loaded.clone() {
+            Some(loaded) => {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Editing {} in {}",
+                            loaded.outline, loaded.dictionary
+                        ))
+                        .small(),
+                    );
+                    if ui
+                        .button("New")
+                        .on_hover_text("Stop editing this entry and start a new one")
+                        .clicked()
+                    {
+                        self.clear_editor();
                     }
                 });
-        });
+            }
+            None => {
+                ui.horizontal(|ui| {
+                    ui.label("New entry in");
+                    egui::ComboBox::from_id_salt("edit-target")
+                        .selected_text(names[self.target].clone())
+                        .show_ui(ui, |ui| {
+                            for (index, name) in names.iter().enumerate() {
+                                ui.selectable_value(&mut self.target, index, name);
+                            }
+                        });
+                });
+            }
+        }
+
+        // The outline being changed from, shown as the hint once the field is
+        // cleared, so it is never a mystery what a save would keep.
+        let outline_hint = match &self.loaded {
+            Some(loaded) => loaded.outline.clone(),
+            None => "PHO*EF".to_owned(),
+        };
 
         ui.horizontal(|ui| {
             ui.label("Outline");
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.edit_outline)
-                    .hint_text("PHO*EF")
+                    .hint_text(outline_hint)
                     .desired_width(f32::INFINITY),
             );
+            if response.gained_focus() {
+                self.outline_regained_focus();
+            }
             self.outline_focused = response.has_focus();
         });
         ui.horizontal(|ui| {
@@ -371,11 +436,18 @@ impl DictionaryPane {
         });
 
         ui.horizontal(|ui| {
-            let has_outline = !self.edit_outline.trim().is_empty();
+            // An empty field with an entry loaded means "keep this outline",
+            // which is what makes changing only the word possible after the
+            // field has cleared itself.
+            let has_outline = !self.edit_outline.trim().is_empty() || self.loaded.is_some();
             let can_save = has_outline && !self.edit_translation.is_empty();
+            let save_hint = match &self.loaded {
+                Some(_) => "Save the change. A different outline moves the entry.",
+                None => "Add the entry, or change its word if the outline already exists",
+            };
             if ui
                 .add_enabled(can_save, egui::Button::new("Save"))
-                .on_hover_text("Add the entry, or change its word if the outline already exists")
+                .on_hover_text(save_hint)
                 .clicked()
             {
                 self.apply_edit(dictionaries, EditKind::Set);
@@ -403,37 +475,78 @@ impl DictionaryPane {
         }
     }
 
+    /// Clear the outline field whenever it regains focus.
+    ///
+    /// Strokes append to this field, so whatever is left in it from the last
+    /// entry becomes the front of the next outline: click away, click back,
+    /// write PHOEF, and the field holds KAT/PHOEF. Clearing loses nothing,
+    /// because the entry being edited is remembered in `loaded` and its outline
+    /// stays visible as the hint.
+    fn outline_regained_focus(&mut self) {
+        self.edit_outline.clear();
+        self.edit_message = None;
+    }
+
+    /// Drop the loaded entry and start a blank one.
+    fn clear_editor(&mut self) {
+        self.loaded = None;
+        self.edit_outline.clear();
+        self.edit_translation.clear();
+        self.edit_message = None;
+    }
+
+    /// The outline the buttons act on: the field, or the loaded entry's own
+    /// outline when the field is empty.
+    fn effective_outline(&self) -> String {
+        let typed = self.edit_outline.trim();
+        match (typed.is_empty(), &self.loaded) {
+            (true, Some(loaded)) => loaded.outline.clone(),
+            _ => typed.to_owned(),
+        }
+    }
+
     fn apply_edit(&mut self, dictionaries: &mut DictionaryStack, kind: EditKind) {
-        let outline = self.edit_outline.trim().to_owned();
+        let outline = self.effective_outline();
+        let loaded = self.loaded.clone();
 
-        // Save writes to the chosen target, so adding an outline that already
-        // exists in another dictionary can deliberately shadow it. Delete finds
-        // the entry by parsing the outline and seeing which dictionary answers.
-        let owning = Stroke::parse_outline(&outline).ok().and_then(|strokes| {
-            dictionaries
-                .dictionaries()
-                .iter()
-                .position(|d| d.lookup(&strokes).is_some())
-        });
-        let index = match kind {
-            // A delete must target the dictionary that actually holds it.
-            EditKind::Remove => match owning {
-                Some(index) => index,
-                None => {
-                    self.edit_message =
-                        Some(Err(format!("{outline} is not in any editable dictionary")));
-                    return;
+        // An entry loaded from a result is edited in its own file. Anything
+        // else is a new entry, and goes where the combo says, so adding an
+        // outline that already exists elsewhere can deliberately shadow it.
+        let path = match (&loaded, kind) {
+            (Some(loaded), _) => loaded.path.clone(),
+            (None, EditKind::Set) => dictionaries.dictionaries()[self.target].path.clone(),
+            // A delete with nothing loaded has to find the entry first.
+            (None, EditKind::Remove) => {
+                let owning = Stroke::parse_outline(&outline).ok().and_then(|strokes| {
+                    dictionaries
+                        .dictionaries()
+                        .iter()
+                        .find(|d| d.lookup(&strokes).is_some())
+                });
+                match owning {
+                    Some(dictionary) => dictionary.path.clone(),
+                    None => {
+                        self.edit_message =
+                            Some(Err(format!("{outline} is not in any editable dictionary")));
+                        return;
+                    }
                 }
-            },
-            EditKind::Set => self.target,
+            }
         };
-
-        let path = dictionaries.dictionaries()[index].path.clone();
         let name = short_name(&path);
 
         let result = match kind {
-            EditKind::Set => set_entry(&path, &outline, &self.edit_translation)
-                .map(|_| format!("Saved {outline} to {name}")),
+            EditKind::Set => match &loaded {
+                // Changing the outline of an existing entry moves it, in one
+                // write. Adding the new one and deleting the old separately
+                // would leave the entry duplicated if the second write failed.
+                Some(loaded) if loaded.outline != outline => {
+                    move_entry(&path, &loaded.outline, &outline, &self.edit_translation)
+                        .map(|_| format!("Moved {} to {outline} in {name}", loaded.outline))
+                }
+                _ => set_entry(&path, &outline, &self.edit_translation)
+                    .map(|_| format!("Saved {outline} to {name}")),
+            },
             EditKind::Remove => {
                 remove_entry(&path, &outline).map(|_| format!("Removed {outline} from {name}"))
             }
@@ -441,8 +554,22 @@ impl DictionaryPane {
 
         match result {
             Ok(message) => {
-                self.reload(dictionaries, index, &path);
+                self.reload(dictionaries, &path);
                 self.invalidate();
+                match kind {
+                    // Keep editing the entry that was just saved, under
+                    // whatever outline it now has, so a second save is another
+                    // change to it rather than a new entry beside it.
+                    EditKind::Set => {
+                        self.loaded = Some(Loaded {
+                            path,
+                            dictionary: name,
+                            outline: outline.clone(),
+                        });
+                        self.edit_outline = outline;
+                    }
+                    EditKind::Remove => self.clear_editor(),
+                }
                 self.edit_message = Some(Ok(message));
             }
             Err(e) => self.edit_message = Some(Err(e.to_string())),
@@ -452,7 +579,14 @@ impl DictionaryPane {
     /// Reload one dictionary from disk after editing it, so the change is live
     /// immediately, keeping its enabled state and its place in the priority
     /// order.
-    fn reload(&mut self, dictionaries: &mut DictionaryStack, index: usize, path: &std::path::Path) {
+    fn reload(&mut self, dictionaries: &mut DictionaryStack, path: &Path) {
+        let Some(index) = dictionaries
+            .dictionaries()
+            .iter()
+            .position(|d| d.path == path)
+        else {
+            return;
+        };
         match Dictionary::load(path) {
             Ok(mut reloaded) => {
                 reloaded.enabled = dictionaries.dictionaries()[index].enabled;
@@ -469,6 +603,47 @@ impl DictionaryPane {
     }
 }
 
+impl From<&Hit> for Loaded {
+    fn from(hit: &Hit) -> Self {
+        Loaded {
+            path: hit.path.clone(),
+            dictionary: hit.dictionary.clone(),
+            outline: hit.outline.clone(),
+        }
+    }
+}
+
+/// One result row. Returns whether it was clicked.
+///
+/// The outline and the word are both clickable, because either is a reasonable
+/// thing to aim at when the intent is "edit that one".
+fn row(ui: &mut egui::Ui, hit: &Hit) -> bool {
+    let mut clicked = false;
+    ui.horizontal_wrapped(|ui| {
+        let outline = egui::RichText::new(&hit.outline).monospace();
+        let value = egui::RichText::new(format!("{:?}", hit.value));
+        let (outline, value) = match hit.winning {
+            true => (outline.strong(), value.strong()),
+            false => (outline.weak(), value.weak()),
+        };
+        let hover = match hit.winning {
+            true => "Click to edit this entry",
+            false => "Click to edit this entry. Shadowed: a higher dictionary answers first.",
+        };
+
+        clicked |= ui
+            .add(egui::Label::new(outline).sense(egui::Sense::click()))
+            .on_hover_text(hover)
+            .clicked();
+        clicked |= ui
+            .add(egui::Label::new(value).sense(egui::Sense::click()))
+            .on_hover_text(hover)
+            .clicked();
+        ui.label(egui::RichText::new(&hit.dictionary).small().weak());
+    });
+    clicked
+}
+
 #[derive(Clone, Copy)]
 enum EditKind {
     Set,
@@ -479,7 +654,6 @@ enum EditKind {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-    use std::path::Path;
 
     fn temp_dict(name: &str, json: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -497,6 +671,14 @@ mod tests {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
+    fn stack(paths: &[&Path]) -> DictionaryStack {
+        let mut stack = DictionaryStack::new();
+        for path in paths {
+            stack.push(Dictionary::load(path).unwrap());
+        }
+        stack
+    }
+
     #[test]
     fn a_dictionary_is_named_by_its_file_rather_than_its_whole_path() {
         let path = std::path::Path::new(r"C:\Users\you\AppData\Local\plover\plover\cb.json");
@@ -507,9 +689,7 @@ mod tests {
     fn saving_an_outline_that_exists_elsewhere_uses_the_selected_dictionary() {
         let high = temp_dict("high", "{\n\"KAT\": \"cat\"\n}\n");
         let selected = temp_dict("selected", "{\n}\n");
-        let mut stack = DictionaryStack::new();
-        stack.push(Dictionary::load(&high).unwrap());
-        stack.push(Dictionary::load(&selected).unwrap());
+        let mut stack = stack(&[&high, &selected]);
 
         let mut pane = DictionaryPane {
             target: 1,
@@ -557,5 +737,195 @@ mod tests {
 
         assert!(!pane.accept_raw_outline(stroke));
         assert_eq!(pane.edit_outline, "");
+    }
+
+    #[test]
+    fn regaining_focus_empties_the_outline_field() {
+        let mut pane = DictionaryPane {
+            edit_outline: "KAT".to_owned(),
+            ..DictionaryPane::new()
+        };
+        pane.outline_regained_focus();
+        assert_eq!(pane.edit_outline, "");
+    }
+
+    #[test]
+    fn clearing_the_field_does_not_lose_the_entry_being_edited() {
+        let dict = temp_dict("keepsloaded", "{\n\"KAT\": \"cat\"\n}\n");
+        let mut pane = DictionaryPane {
+            loaded: Some(Loaded {
+                path: dict.clone(),
+                dictionary: short_name(&dict),
+                outline: "KAT".to_owned(),
+            }),
+            edit_outline: "KAT".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.outline_regained_focus();
+
+        assert_eq!(pane.edit_outline, "");
+        assert_eq!(
+            pane.effective_outline(),
+            "KAT",
+            "the move still knows its start"
+        );
+    }
+
+    #[test]
+    fn a_word_that_is_also_valid_steno_is_answered_both_ways() {
+        // "TO" parses as steno, so the old pane answered only the forward
+        // direction and never said how the word itself is written.
+        let dict = temp_dict("bothways", "{\n\"TO\": \"toe\",\n\"TOU\": \"to\"\n}\n");
+        let mut pane = DictionaryPane {
+            query: "TO".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.recompute(&stack(&[&dict]));
+
+        assert_eq!(pane.forward.len(), 1, "TO is an outline meaning toe");
+        assert_eq!(pane.forward[0].value, "toe");
+        assert_eq!(pane.reverse.len(), 1, "and the word to is written TOU");
+        assert_eq!(pane.reverse[0].outline, "TOU");
+        assert!(pane.parse_error.is_none());
+    }
+
+    #[test]
+    fn capitalisation_does_not_hide_an_outline_and_exact_matches_rank_first() {
+        let dict = temp_dict("case", "{\n\"THE\": \"The\",\n\"-T\": \"the\"\n}\n");
+        let mut pane = DictionaryPane {
+            query: "the".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.recompute(&stack(&[&dict]));
+
+        assert_eq!(pane.reverse.len(), 2);
+        assert_eq!(pane.reverse[0].value, "the", "exact match first");
+        assert_eq!(pane.reverse[1].value, "The");
+    }
+
+    #[test]
+    fn every_outline_for_a_word_is_listed_shortest_first() {
+        let dict = temp_dict(
+            "allstrokes",
+            "{\n\"KAT\": \"cat\",\n\"KAERT\": \"cat\",\n\"KAT/KAT\": \"cat\"\n}\n",
+        );
+        let mut pane = DictionaryPane {
+            query: "cat".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.recompute(&stack(&[&dict]));
+
+        let outlines: Vec<&str> = pane.reverse.iter().map(|h| h.outline.as_str()).collect();
+        assert_eq!(outlines, ["KAT", "KAERT", "KAT/KAT"]);
+    }
+
+    #[test]
+    fn the_same_word_in_two_dictionaries_is_listed_once_per_dictionary() {
+        // Both are real, separately editable entries. Collapsing them would
+        // hide one of the two files the user might need to change.
+        let high = temp_dict("dupehigh", "{\n\"KAT\": \"cat\"\n}\n");
+        let low = temp_dict("dupelow", "{\n\"KAT\": \"cat\"\n}\n");
+        let mut pane = DictionaryPane {
+            query: "cat".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.recompute(&stack(&[&high, &low]));
+
+        assert_eq!(pane.reverse.len(), 2);
+        assert!(pane.reverse[0].winning, "the higher dictionary answers");
+        assert!(!pane.reverse[1].winning, "the lower one is shadowed");
+    }
+
+    #[test]
+    fn changing_the_outline_of_a_loaded_entry_moves_it() {
+        let dict = temp_dict("moveit", "{\n\"KAT\": \"cat\",\n\"TKOG\": \"dog\"\n}\n");
+        let mut stack = stack(&[&dict]);
+        let mut pane = DictionaryPane {
+            loaded: Some(Loaded {
+                path: dict.clone(),
+                dictionary: short_name(&dict),
+                outline: "KAT".to_owned(),
+            }),
+            edit_outline: "KAERT".to_owned(),
+            edit_translation: "cat".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.apply_edit(&mut stack, EditKind::Set);
+
+        let map = read_map(&dict);
+        assert_eq!(map.len(), 2, "moved, not duplicated");
+        assert!(!map.contains_key("KAT"));
+        assert_eq!(map["KAERT"], "cat");
+        assert_eq!(map["TKOG"], "dog");
+        assert_eq!(pane.loaded.as_ref().unwrap().outline, "KAERT");
+    }
+
+    #[test]
+    fn a_loaded_entry_is_saved_where_it_lives_not_where_the_combo_points() {
+        let owning = temp_dict("owning", "{\n\"KAT\": \"cat\"\n}\n");
+        let other = temp_dict("other", "{\n}\n");
+        // The combo points at the second dictionary, which is where a new
+        // entry would go. This one is not new.
+        let mut stack = stack(&[&owning, &other]);
+        let mut pane = DictionaryPane {
+            target: 1,
+            loaded: Some(Loaded {
+                path: owning.clone(),
+                dictionary: short_name(&owning),
+                outline: "KAT".to_owned(),
+            }),
+            edit_outline: "KAT".to_owned(),
+            edit_translation: "kitten".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.apply_edit(&mut stack, EditKind::Set);
+
+        assert_eq!(read_map(&owning)["KAT"], "kitten");
+        assert!(read_map(&other).is_empty());
+    }
+
+    #[test]
+    fn deleting_a_loaded_entry_clears_the_editor() {
+        let dict = temp_dict("delloaded", "{\n\"KAT\": \"cat\"\n}\n");
+        let mut stack = stack(&[&dict]);
+        let mut pane = DictionaryPane {
+            loaded: Some(Loaded {
+                path: dict.clone(),
+                dictionary: short_name(&dict),
+                outline: "KAT".to_owned(),
+            }),
+            edit_translation: "cat".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.apply_edit(&mut stack, EditKind::Remove);
+
+        assert!(read_map(&dict).is_empty());
+        assert!(pane.loaded.is_none());
+        assert_eq!(pane.edit_outline, "");
+        assert!(matches!(pane.edit_message, Some(Ok(_))));
+    }
+
+    #[test]
+    fn an_edit_is_visible_in_the_stack_without_a_restart() {
+        let dict = temp_dict("livereload", "{\n\"KAT\": \"cat\"\n}\n");
+        let mut stack = stack(&[&dict]);
+        let mut pane = DictionaryPane {
+            edit_outline: "KAT".to_owned(),
+            edit_translation: "kitten".to_owned(),
+            ..DictionaryPane::new()
+        };
+
+        pane.apply_edit(&mut stack, EditKind::Set);
+
+        let strokes = Stroke::parse_outline("KAT").unwrap();
+        assert_eq!(stack.lookup(&strokes), Some("kitten"));
     }
 }

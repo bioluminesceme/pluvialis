@@ -99,12 +99,18 @@ impl Dictionary {
         &self.bad_keys
     }
 
-    /// Every outline that maps to the given text, for reverse lookup.
-    pub fn reverse_lookup(&self, text: &str) -> Vec<&[Stroke]> {
+    /// Every entry that produces the given text, with its translation.
+    ///
+    /// Matched without regard to case, because the person asking "how do I
+    /// write this" has no reason to reproduce the capitalisation the entry
+    /// happens to be stored with, and an entry for "The" is still an answer to
+    /// "the". The translation comes back with the outline so the caller can
+    /// show which one it found and rank exact matches first.
+    pub fn reverse_lookup(&self, text: &str) -> Vec<(&[Stroke], &str)> {
         self.entries
             .iter()
-            .filter(|(_, v)| v.as_str() == text)
-            .map(|(k, _)| &**k)
+            .filter(|(_, v)| v.eq_ignore_ascii_case(text))
+            .map(|(k, v)| (&**k, v.as_str()))
             .collect()
     }
 }
@@ -285,10 +291,7 @@ mod programmatic_tests {
     fn a_programmatic_dictionary_answers_when_the_json_ones_miss() {
         let stack = stack(true);
         let outline = Stroke::parse_outline("SWR").unwrap();
-        assert_eq!(
-            stack.lookup_owned(&outline),
-            Some("computed".to_owned())
-        );
+        assert_eq!(stack.lookup_owned(&outline), Some("computed".to_owned()));
     }
 
     #[test]
@@ -382,6 +385,40 @@ mod tests {
 
         stack.dictionaries_mut()[0].enabled = false;
         assert_eq!(stack.lookup(&outline("KAT")), Some("cat"));
+    }
+
+    #[test]
+    fn reverse_lookup_finds_every_outline_for_a_word() {
+        let path = write_dict(
+            "pluvialis_test_reverse.json",
+            r#"{"SKP": "and", "APBD": "and", "KAT": "cat"}"#,
+        );
+        let dict = Dictionary::load(&path).unwrap();
+
+        let mut found: Vec<String> = dict
+            .reverse_lookup("and")
+            .iter()
+            .map(|(outline, _)| Stroke::render_outline(outline))
+            .collect();
+        found.sort();
+        assert_eq!(found, ["APBD", "SKP"]);
+    }
+
+    #[test]
+    fn reverse_lookup_ignores_case_and_reports_what_it_found() {
+        let path = write_dict(
+            "pluvialis_test_reversecase.json",
+            r#"{"THE": "The", "-T": "the"}"#,
+        );
+        let dict = Dictionary::load(&path).unwrap();
+
+        let mut found: Vec<&str> = dict
+            .reverse_lookup("the")
+            .iter()
+            .map(|(_, value)| *value)
+            .collect();
+        found.sort();
+        assert_eq!(found, ["The", "the"]);
     }
 
     #[test]

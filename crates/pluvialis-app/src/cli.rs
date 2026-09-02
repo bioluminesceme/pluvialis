@@ -19,6 +19,13 @@ use pluvialis_core::{Dictionary, DictionaryStack, Stroke, Translation, Translato
 ///
 /// `clean --write` writes to these, and that is the point: the file it edits is
 /// one nothing else reads.
+/// A dictionary's file name, for output that has to fit on a line.
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 fn library_dictionaries() -> Vec<PathBuf> {
     if let Err(e) = crate::library::ensure() {
         eprintln!("could not prepare the dictionary library: {e}");
@@ -46,7 +53,7 @@ pub fn run(args: &[String]) -> std::process::ExitCode {
 
 fn usage() {
     eprintln!("usage:");
-    eprintln!("  pluvialis lookup <OUTLINE> [OUTLINE...]");
+    eprintln!("  pluvialis lookup <OUTLINE|WORD> [OUTLINE|WORD...]");
     eprintln!("  pluvialis clean [--write] [DICTIONARY...]");
     eprintln!("  pluvialis check [DICTIONARY...]");
     eprintln!("  pluvialis machine [SECONDS]");
@@ -358,20 +365,24 @@ fn clean(args: &[String]) -> std::process::ExitCode {
     }
 }
 
-fn lookup(outlines: &[String]) -> std::process::ExitCode {
-    if outlines.is_empty() {
-        eprintln!("usage: pluvialis lookup <OUTLINE> [OUTLINE...]");
-        eprintln!("example: pluvialis lookup KAT WEL/KO*PL");
+/// Answer from the real dictionaries, in both directions.
+///
+/// An argument is looked up as an outline when it parses as one, and as a word
+/// always. Both, because plenty of words are also valid steno ("the", "to",
+/// "pro"), and answering only one direction hides the other with no sign that
+/// it was skipped. Read only: editing entries is the GUI's job, where the
+/// dictionary a change lands in is visible.
+fn lookup(queries: &[String]) -> std::process::ExitCode {
+    if queries.is_empty() {
+        eprintln!("usage: pluvialis lookup <OUTLINE|WORD> [OUTLINE|WORD...]");
+        eprintln!("example: pluvialis lookup KAT WEL/KO*PL cat");
         return std::process::ExitCode::from(2);
     }
 
     let started = Instant::now();
     let mut stack = DictionaryStack::new();
     for path in library_dictionaries() {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        let name = file_name(&path);
         match Dictionary::load(&path) {
             Ok(dictionary) => {
                 let bad = dictionary.bad_keys().len();
@@ -409,34 +420,77 @@ fn lookup(outlines: &[String]) -> std::process::ExitCode {
     );
 
     let mut failed = false;
-    for outline in outlines {
+    for query in queries {
         println!();
-        let strokes = match Stroke::parse_outline(outline) {
-            Ok(strokes) => strokes,
-            Err(e) => {
-                println!("{outline}: not valid steno: {e}");
-                failed = true;
-                continue;
-            }
-        };
-
-        let canonical = Stroke::render_outline(&strokes);
+        println!("{query}");
         let started = Instant::now();
-        let hit = stack.lookup(&strokes);
+        let parsed = Stroke::parse_outline(query).ok();
+        let mut found = false;
+
+        // What the outline means. Every dictionary that has it, not just the
+        // one that wins, so a shadowed entry is visible rather than a mystery.
+        if let Some(strokes) = &parsed {
+            let canonical = Stroke::render_outline(strokes);
+            let winner = stack
+                .dictionaries()
+                .iter()
+                .position(|d| d.enabled && d.lookup(strokes).is_some());
+            for (index, dictionary) in stack.dictionaries().iter().enumerate() {
+                if let Some(value) = dictionary.lookup(strokes) {
+                    found = true;
+                    println!(
+                        "  means  {:<20} {:<40} {}{}",
+                        canonical,
+                        format!("{value:?}"),
+                        file_name(&dictionary.path),
+                        match (winner == Some(index), dictionary.enabled) {
+                            (true, _) => "",
+                            (false, true) => "   (shadowed)",
+                            (false, false) => "   (disabled)",
+                        }
+                    );
+                }
+            }
+        }
+
+        // Every way the query can be written. Runs whether or not it parsed as
+        // steno, so a word that is also an outline still shows its strokes.
+        let mut written: Vec<(String, String, String)> = Vec::new();
+        for dictionary in stack.dictionaries() {
+            for (outline, value) in dictionary.reverse_lookup(query) {
+                written.push((
+                    Stroke::render_outline(outline),
+                    value.to_owned(),
+                    file_name(&dictionary.path),
+                ));
+            }
+        }
+        // Shortest outline first: the brief is what a writer wants to learn.
+        written.sort_by(|a, b| a.0.len().cmp(&b.0.len()).then(a.0.cmp(&b.0)));
+        for (outline, value, dictionary) in &written {
+            found = true;
+            println!(
+                "  write  {outline:<20} {:<40} {dictionary}",
+                format!("{value:?}")
+            );
+        }
+
         let elapsed = started.elapsed();
-
-        match hit {
-            Some(text) => println!("{canonical} -> {text:?}   ({elapsed:?})"),
-            None => println!("{canonical} -> no entry   ({elapsed:?})"),
+        if !found {
+            println!("  no entry, and nothing is written that way");
+            failed = true;
         }
+        println!("  (searched in {elapsed:.0?})");
 
-        // Also show what the translator makes of it stroke by stroke, which is
-        // where retroactive correction becomes visible.
-        let mut translator = Translator::new();
-        for stroke in &strokes {
-            translator.translate(&stack, *stroke);
+        // What the translator makes of it stroke by stroke, which is where
+        // retroactive correction becomes visible. Only meaningful for steno.
+        if let Some(strokes) = &parsed {
+            let mut translator = Translator::new();
+            for stroke in strokes {
+                translator.translate(&stack, *stroke);
+            }
+            println!("  translated: {:?}", translator.text());
         }
-        println!("    translated: {:?}", translator.text());
     }
 
     if failed {

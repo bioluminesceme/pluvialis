@@ -143,7 +143,9 @@ target\release\pluvialis-app.exe
 It also has command-line subcommands, useful for diagnosing dictionaries and the
 machine layer without the GUI:
 
-- `lookup <OUTLINE>...` answers from the real dictionaries, with timings.
+- `lookup <OUTLINE|WORD>...` answers from the real dictionaries in both
+  directions: what an outline means in every dictionary that has it, and
+  every outline that writes a word. It reports timings and changes nothing.
 - `check [DICT...]` formats every entry and reports unimplemented meta commands.
   It exits non-zero on anything new, so it doubles as a regression check.
 - `clean [--write] [DICT...]` removes entries whose keys are not valid steno. It
