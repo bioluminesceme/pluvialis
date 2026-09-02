@@ -67,8 +67,6 @@ fn raw_color(visuals: &egui::Visuals) -> Color32 {
 /// A connected writer. Green reads the same on both themes at this weight.
 const CONNECTED_COLOR: Color32 = Color32::from_rgb(0x2E, 0xA0, 0x43);
 
-
-
 /// One line of the tape: what was written, and what it produced.
 struct TapeEntry {
     outline: String,

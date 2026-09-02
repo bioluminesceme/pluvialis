@@ -98,12 +98,7 @@ pub fn open_file_request(sequence: u32) -> Vec<u8> {
 
 /// Ask for up to [`MAX_READ`] bytes starting at `offset`.
 pub fn read_file_request(sequence: u32, offset: u32) -> Vec<u8> {
-    encode(
-        sequence,
-        PACKET_READ_FILE,
-        [offset, MAX_READ, 0, 0, 0],
-        &[],
-    )
+    encode(sequence, PACKET_READ_FILE, [offset, MAX_READ, 0, 0, 0], &[])
 }
 
 pub fn decode_header(bytes: &[u8]) -> Result<Response, MachineError> {

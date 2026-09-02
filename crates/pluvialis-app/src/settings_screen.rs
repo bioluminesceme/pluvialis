@@ -74,7 +74,10 @@ fn writing(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
             )
             .changed();
     });
-    note(ui, "The size of the text on the Home screen. Takes effect at once.");
+    note(
+        ui,
+        "The size of the text on the Home screen. Takes effect at once.",
+    );
 
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -263,9 +266,7 @@ fn where_things_live(ui: &mut egui::Ui, documents_dir: &Path) {
 fn open_folder_button(ui: &mut egui::Ui, folder: &Path) {
     #[cfg(windows)]
     if ui.button("Open folder").clicked()
-        && let Err(e) = std::process::Command::new("explorer")
-            .arg(folder)
-            .spawn()
+        && let Err(e) = std::process::Command::new("explorer").arg(folder).spawn()
     {
         log::warn!("could not open {}: {e}", folder.display());
     }

@@ -333,7 +333,10 @@ mod tests {
     #[test]
     fn a_retroactive_correction_reaches_back_only_as_far_as_it_differs() {
         // "wel come" becoming "welcome": the shared "wel" is left alone.
-        let edit = steno_edit(&formatted("wel come", vec![]), &formatted("welcome", vec![]));
+        let edit = steno_edit(
+            &formatted("wel come", vec![]),
+            &formatted("welcome", vec![]),
+        );
         assert_eq!(edit.backspaces, 5, "should not rewrite the shared prefix");
         assert_eq!(edit.text, "come");
     }
@@ -345,7 +348,11 @@ mod tests {
             &formatted("cat KAT", vec![(4, 7)]),
         );
         assert_eq!(edit.text, "KAT");
-        assert_eq!(edit.raw_ranges, vec![(0, 3)], "relative to the inserted text");
+        assert_eq!(
+            edit.raw_ranges,
+            vec![(0, 3)],
+            "relative to the inserted text"
+        );
     }
 
     #[test]
@@ -355,7 +362,10 @@ mod tests {
             &formatted("KAT dog", vec![(0, 3)]),
         );
         assert_eq!(edit.text, " dog");
-        assert!(edit.raw_ranges.is_empty(), "the document already has it red");
+        assert!(
+            edit.raw_ranges.is_empty(),
+            "the document already has it red"
+        );
     }
 
     #[test]

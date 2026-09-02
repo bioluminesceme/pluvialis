@@ -116,7 +116,10 @@ impl Stats {
             return Stats::default();
         };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-            log::warn!("{} is not valid JSON, starting the counts over", path.display());
+            log::warn!(
+                "{} is not valid JSON, starting the counts over",
+                path.display()
+            );
             return Stats::default();
         };
 
@@ -236,7 +239,10 @@ impl Stats {
 
         for translation in &delta.added {
             match translation.is_untranslated() {
-                true => bump(&mut self.untranslated, &Stroke::render_outline(&translation.strokes)),
+                true => bump(
+                    &mut self.untranslated,
+                    &Stroke::render_outline(&translation.strokes),
+                ),
                 false => bump(&mut self.words, &translation.output()),
             }
         }
@@ -421,7 +427,10 @@ mod tests {
                 false,
             );
         }
-        assert_eq!(stats.top_words(10), vec![("the".into(), 2), ("cat".into(), 1)]);
+        assert_eq!(
+            stats.top_words(10),
+            vec![("the".into(), 2), ("cat".into(), 1)]
+        );
         assert_eq!(stats.strokes(), 3);
     }
 

@@ -29,7 +29,10 @@ pub struct Key {
 
 impl Key {
     const fn plain(vk: u16) -> Self {
-        Key { vk, extended: false }
+        Key {
+            vk,
+            extended: false,
+        }
     }
     const fn extended(vk: u16) -> Self {
         Key { vk, extended: true }
@@ -260,10 +263,50 @@ mod tests {
         // Measured across cb_dictionary_full.json and dutch.json:
         // 201 combos, 44 distinct names.
         let measured = [
-            "Control_L", "Left", "Right", "Shift", "Up", "Down", "Home", "End", "Control",
-            "Delete", "Page_Down", "Page_Up", "Tab", "Super_L", "Alt_L", "F11", "F3", "Escape",
-            "v", "k", "w", "c", "BackSpace", "return", "Return", "e", "F5", "F9", "F8", "F2",
-            "F4", "F6", "F7", "F12", "F10", "F1", "a", "y", "f", "p", "n", "x", "s", "z",
+            "Control_L",
+            "Left",
+            "Right",
+            "Shift",
+            "Up",
+            "Down",
+            "Home",
+            "End",
+            "Control",
+            "Delete",
+            "Page_Down",
+            "Page_Up",
+            "Tab",
+            "Super_L",
+            "Alt_L",
+            "F11",
+            "F3",
+            "Escape",
+            "v",
+            "k",
+            "w",
+            "c",
+            "BackSpace",
+            "return",
+            "Return",
+            "e",
+            "F5",
+            "F9",
+            "F8",
+            "F2",
+            "F4",
+            "F6",
+            "F7",
+            "F12",
+            "F10",
+            "F1",
+            "a",
+            "y",
+            "f",
+            "p",
+            "n",
+            "x",
+            "s",
+            "z",
         ];
         for name in measured {
             assert!(key_for(name).is_some(), "{name} does not resolve");

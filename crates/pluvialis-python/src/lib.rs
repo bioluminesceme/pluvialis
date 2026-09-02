@@ -273,11 +273,15 @@ mod screening {
 
     #[test]
     fn it_accepts_the_shapes_a_dictionary_uses() {
-        assert!(defines_lookup("def lookup(key):\n    raise KeyError(key)\n"));
+        assert!(defines_lookup(
+            "def lookup(key):\n    raise KeyError(key)\n"
+        ));
         assert!(defines_lookup("lookup = _make_lookup()\n"));
         assert!(defines_lookup("from tables import lookup\n"));
         assert!(defines_lookup("from tables import phrase as lookup\n"));
-        assert!(defines_lookup("if fast:\n    def lookup(key):\n        pass\n"));
+        assert!(defines_lookup(
+            "if fast:\n    def lookup(key):\n        pass\n"
+        ));
     }
 
     /// A script that merely mentions dictionaries is not one.
@@ -410,11 +414,7 @@ mod tests {
 
     #[test]
     fn reverse_lookup_is_optional_and_used_when_present() {
-        let dictionary = load(
-            "noreverse",
-            "def lookup(key):\n    raise KeyError\n",
-        )
-        .expect("load");
+        let dictionary = load("noreverse", "def lookup(key):\n    raise KeyError\n").expect("load");
         assert!(dictionary.reverse_lookup("cat").is_empty());
 
         let dictionary = load(

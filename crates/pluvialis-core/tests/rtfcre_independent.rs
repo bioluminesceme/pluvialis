@@ -96,8 +96,7 @@ fn a_literal_brace_is_escaped_for_the_formatter() {
 
 #[test]
 fn unrecognised_ignorable_groups_are_skipped_rather_than_emitted() {
-    let entries =
-        rtfcre::parse(&wrap(r"{\*\cxs KAT}cat{\*\cxcomment a note}")).expect("parsing");
+    let entries = rtfcre::parse(&wrap(r"{\*\cxs KAT}cat{\*\cxcomment a note}")).expect("parsing");
     assert_eq!(entries, vec![("KAT".to_owned(), "cat".to_owned())]);
 }
 
@@ -108,8 +107,8 @@ fn a_file_that_is_not_rtf_is_an_error_rather_than_an_empty_dictionary() {
     for bad in [
         "",
         "just some text",
-        "{\\rtf1\\ansi}",           // RTF, but not a dictionary
-        "{\\rtf1\\ansi\\cxdict",    // truncated
+        "{\\rtf1\\ansi}",        // RTF, but not a dictionary
+        "{\\rtf1\\ansi\\cxdict", // truncated
     ] {
         let result = rtfcre::parse(bad);
         if let Ok(entries) = &result {

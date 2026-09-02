@@ -212,7 +212,9 @@ impl Storage {
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_else(|| "untitled".to_owned());
-        let base = document.parent().filter(|parent| !parent.as_os_str().is_empty());
+        let base = document
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
         match base {
             Some(base) => base.join(HISTORY_DIR).join(name),
             None => self.documents_dir.join(HISTORY_DIR).join(name),
@@ -387,7 +389,10 @@ mod tests {
 
     #[test]
     fn a_snapshot_filename_round_trips_to_its_timestamp() {
-        assert_eq!(snapshot_time(Path::new("1784541960123.md")), Some(1784541960123));
+        assert_eq!(
+            snapshot_time(Path::new("1784541960123.md")),
+            Some(1784541960123)
+        );
         assert_eq!(snapshot_time(Path::new("notatimestamp.md")), None);
         assert_eq!(snapshot_time(Path::new("untitled.md")), None);
     }
@@ -495,14 +500,20 @@ mod tests {
         let target = chosen.join("lecture.md");
         storage.choose_target(&target);
         assert!(storage.save("first").expect("save"));
-        assert!(storage.save("second").expect("save"), "changed text snapshots");
+        assert!(
+            storage.save("second").expect("save"),
+            "changed text snapshots"
+        );
 
         let history = chosen.join(HISTORY_DIR).join("lecture");
         assert!(history.is_dir(), "history sits beside the chosen file");
         assert_eq!(storage.snapshots().len(), 2);
 
         let stray = documents.join(HISTORY_DIR);
-        assert!(!stray.exists(), "nothing written under the documents folder");
+        assert!(
+            !stray.exists(),
+            "nothing written under the documents folder"
+        );
 
         let _ = std::fs::remove_dir_all(&documents);
     }

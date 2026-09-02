@@ -1,12 +1,12 @@
 //! Emitting keystrokes with `SendInput`.
 
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, KEYBDINPUT, SendInput, VIRTUAL_KEY,
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY,
 };
 
-use crate::keys::{Chord, Key};
 use crate::OutputError;
+use crate::keys::{Chord, Key};
 
 /// Backspace, for deleting what a correction replaces.
 const VK_BACK: u16 = 0x08;

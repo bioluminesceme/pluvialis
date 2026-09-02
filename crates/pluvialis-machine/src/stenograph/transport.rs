@@ -228,10 +228,7 @@ impl Transport {
     }
 
     /// Send a request and read its response.
-    pub fn send_receive(
-        &mut self,
-        request: &[u8],
-    ) -> Result<(Response, Vec<u8>), MachineError> {
+    pub fn send_receive(&mut self, request: &[u8]) -> Result<(Response, Vec<u8>), MachineError> {
         self.write_packet(request)?;
         self.read_packet()
     }

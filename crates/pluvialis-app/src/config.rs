@@ -259,7 +259,9 @@ mod tests {
     fn the_whole_config_round_trips() {
         let path = temp_file("roundtrip");
         let mut config = Config::default();
-        config.enabled.insert("cb_dictionary_full.json".into(), true);
+        config
+            .enabled
+            .insert("cb_dictionary_full.json".into(), true);
         config.enabled.insert("dutch.json".into(), false);
         config.order = vec!["dutch.json".into(), "cb_dictionary_full.json".into()];
         config.settings.autosave_seconds = 30;
@@ -321,8 +323,11 @@ mod tests {
     #[test]
     fn a_setting_the_file_does_not_mention_takes_its_default() {
         let path = temp_file("partial");
-        std::fs::write(&path, r#"{"dictionaries": {}, "settings": {"font_size": 20}}"#)
-            .expect("writing the probe");
+        std::fs::write(
+            &path,
+            r#"{"dictionaries": {}, "settings": {"font_size": 20}}"#,
+        )
+        .expect("writing the probe");
 
         let settings = load_from(&path).settings;
         assert_eq!(settings.font_size, 20.0);
