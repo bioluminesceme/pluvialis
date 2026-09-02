@@ -13,6 +13,21 @@
 //! - No comparison sort at query time. The display orders are permutations
 //!   computed once, so a search is a single pass that pushes matching ids in
 //!   the order they will be shown.
+//!
+//! Measured at 101,419 synthetic entries in release, by the `cost_at_the_real_size`
+//! test at the bottom of this file:
+//!
+//! | rebuild | building one column order | substring search | re-sort |
+//! |---|---|---|---|
+//! | 51 ms | 13 to 150 ms, once each | 8 ms | 0.02 ms |
+//!
+//! The index holds about 8 MB on top of the dictionaries. Rebuild happens on
+//! load and after an edit, never on a redraw.
+//!
+//! The only visible pause is building a column's display order, which happens
+//! once per column per rebuild. Eight milliseconds per keystroke for a search
+//! is half a frame, and it is spent on cache misses rather than comparisons:
+//! the permutation reads the entries in scattered order.
 
 use std::path::{Path, PathBuf};
 
@@ -174,6 +189,21 @@ impl EntryIndex {
         let order = self.orders[query.sort.column()]
             .as_deref()
             .unwrap_or_default();
+
+        // The unsearched, unfiltered table is the state the screen opens in, so
+        // it is worth not walking every entry to answer it. Measured at 101,419
+        // entries: 11.5 ms ranking them all against nothing, against well under
+        // a millisecond to copy the order. The cost is cache misses, since the
+        // permutation reads the entries in scattered order.
+        if needle.is_empty() && query.dictionary.is_none() {
+            self.rows.clear();
+            self.rows.extend_from_slice(order);
+            if query.descending && query.sort != Sort::Relevance {
+                self.rows.reverse();
+            }
+            self.cached = Some(query.clone());
+            return;
+        }
 
         // Ranked buckets, so the whole thing stays one pass with no sort. An
         // unranked search (no text) has one bucket and copies the permutation.
@@ -476,6 +506,31 @@ mod tests {
         assert_eq!(index.scans, before + 1, "the cache did not survive");
     }
 
+    /// Every outline this builds is real steno: an initial, a vowel and a
+    /// final, three strokes deep. An earlier version of this test counted up in
+    /// decimal, which produced keys that do not parse, so 100,796 of them went
+    /// to `bad_keys` and the measurement was of 623 entries pretending to be
+    /// 101,419.
+    fn synthetic_outline(mut n: usize) -> String {
+        const INITIALS: [char; 7] = ['S', 'T', 'K', 'P', 'W', 'H', 'R'];
+        const VOWELS: [char; 4] = ['A', 'O', 'E', 'U'];
+        const FINALS: [char; 8] = ['F', 'B', 'L', 'G', 'T', 'S', 'D', 'Z'];
+        const PER_STROKE: usize = 7 * 4 * 8;
+
+        let mut strokes = Vec::new();
+        for _ in 0..3 {
+            let stroke = n % PER_STROKE;
+            n /= PER_STROKE;
+            strokes.push(format!(
+                "{}{}{}",
+                INITIALS[stroke % 7],
+                VOWELS[(stroke / 7) % 4],
+                FINALS[stroke / 28]
+            ));
+        }
+        strokes.join("/")
+    }
+
     /// Not a test, a measurement. Run with
     /// `cargo test -p pluvialis-app --release cost -- --ignored --nocapture`.
     #[test]
@@ -484,27 +539,49 @@ mod tests {
         use std::fmt::Write as _;
         use std::time::Instant;
 
+        const ENTRIES: usize = 101_419;
         let mut json = String::from("{\n");
-        for i in 0..101_419u32 {
-            let _ = writeln!(json, "\"KAT/{i}\": \"word number {i}\",");
+        for i in 0..ENTRIES {
+            let comma = if i + 1 < ENTRIES { "," } else { "" };
+            let _ = writeln!(
+                json,
+                "\"{}\": \"word number {i}\"{comma}",
+                synthetic_outline(i)
+            );
         }
-        json.push_str("\"KAT\": \"cat\"\n}\n");
+        json.push_str("}\n");
         let path = temp_dict("cost", &json);
 
         let mut stack = DictionaryStack::new();
         let started = Instant::now();
         stack.push(Dictionary::load(&path).unwrap());
         println!("load          {:?}", started.elapsed());
+        let loaded = stack.dictionaries()[0].len();
+        assert_eq!(loaded, ENTRIES, "every synthetic key has to be real steno");
 
         let mut index = EntryIndex::new();
         let started = Instant::now();
         index.rebuild(&stack);
         println!("rebuild       {:?}", started.elapsed());
 
+        // The first query pays for the permutation that column is displayed
+        // in. Timed on its own, or it is charged to the search and the search
+        // looks ten times more expensive than it is.
         let started = Instant::now();
         index.refresh(&query(""));
         println!(
-            "empty query   {:?}  ({} rows)",
+            "first order   {:?}  (sorts every outline, once)",
+            started.elapsed()
+        );
+
+        let started = Instant::now();
+        index.refresh(&Query {
+            dictionary: Some(0),
+            ..Query::default()
+        });
+        index.refresh(&query(""));
+        println!(
+            "empty query   {:?}  (twice, order already built, {} rows)",
             started.elapsed(),
             index.total_matches()
         );
@@ -522,7 +599,21 @@ mod tests {
             sort: Sort::Word,
             ..Query::default()
         });
-        println!("sort by word  {:?}", started.elapsed());
+        println!(
+            "sort by word  {:?}  (first use, builds the order)",
+            started.elapsed()
+        );
+
+        let started = Instant::now();
+        index.refresh(&Query {
+            sort: Sort::Word,
+            descending: true,
+            ..Query::default()
+        });
+        println!(
+            "re-sort       {:?}  (order already built)",
+            started.elapsed()
+        );
 
         let bytes: usize = index
             .entries
