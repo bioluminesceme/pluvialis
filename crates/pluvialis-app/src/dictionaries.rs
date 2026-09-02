@@ -135,6 +135,15 @@ impl DictionaryPane {
         self.last_query = None;
     }
 
+    /// Whether a field here is waiting to be filled by the writer.
+    ///
+    /// Read by the router before a batch of strokes is handled, so the whole
+    /// batch goes to one place. `accept_raw_outline` stays the authority on
+    /// actually taking a stroke.
+    pub fn wants_strokes(&self) -> bool {
+        self.outline_focused
+    }
+
     pub fn accept_raw_outline(&mut self, stroke: Stroke) -> bool {
         if !self.outline_focused {
             return false;

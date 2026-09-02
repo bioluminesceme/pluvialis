@@ -33,6 +33,8 @@ use pluvialis_core::{
 };
 use pluvialis_machine::{MachineEvent, MachineStatus, Scanner, all_machines};
 
+use crate::screens::Screen;
+
 /// Where an output batch goes.
 ///
 /// Decided by window focus at the moment the batch is produced, and each batch
@@ -157,7 +159,9 @@ pub struct LiveView {
     output_enabled: bool,
 
     dictionary_pane: crate::dictionaries::DictionaryPane,
-    show_dictionaries: bool,
+    /// Where the current batch of strokes goes, decided once in
+    /// `pump_machine` and read by `apply`. See `crate::screens::sink`.
+    sink: crate::screens::Sink,
 
     storage: crate::storage::Storage,
     last_autosave: std::time::Instant,
@@ -198,7 +202,7 @@ impl LiveView {
             last_destination: Destination::Document,
             output_enabled: true,
             dictionary_pane: crate::dictionaries::DictionaryPane::new(),
-            show_dictionaries: false,
+            sink: crate::screens::Sink::Document,
             storage: crate::storage::Storage::new(documents_dir()),
             last_autosave: std::time::Instant::now(),
             save_error: None,
@@ -450,9 +454,11 @@ impl LiveView {
     /// Focus is sampled here, before any stroke is handled, so a whole batch is
     /// routed by the focus that was true when it arrived rather than by
     /// whatever happens to be true partway through.
-    pub fn pump_machine(&mut self, ctx: &egui::Context) {
+    pub fn pump_machine(&mut self, ctx: &egui::Context, screen: crate::screens::Screen) {
         let was_focused = self.focused;
         self.focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        self.sink =
+            crate::screens::sink(self.focused, screen, self.dictionary_pane.wants_strokes());
 
         // Losing focus usually means the user has gone to another program,
         // which is exactly when unsaved work is most likely to be forgotten
@@ -660,11 +666,12 @@ impl LiveView {
     /// enter by the same door.
     pub fn apply(&mut self, stroke: Stroke) {
         let outline = Stroke::render_outline(&[stroke]);
-        if self.focused && self.show_dictionaries && self.dictionary_pane.accept_raw_outline(stroke)
+        if self.sink == crate::screens::Sink::Field
+            && self.dictionary_pane.accept_raw_outline(stroke)
         {
             self.tape.push(TapeEntry {
                 outline,
-                result: "outline field".to_owned(),
+                result: "dictionary field".to_owned(),
             });
             trim_tape(&mut self.tape);
             return;
@@ -853,48 +860,65 @@ impl LiveView {
         job
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
+    /// Everything around the screen: the Home toolbar, the status bar and the
+    /// tape.
+    ///
+    /// Panels have to be added before the central area, so the shell calls this
+    /// before it draws whichever screen is showing.
+    pub fn chrome(&mut self, ui: &mut egui::Ui, screen: Screen) {
         // egui 0.35 unified SidePanel and TopBottomPanel into `Panel`.
-        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::right("tape")
-            .resizable(true)
-            .default_size(210.0)
-            .show(ui, |ui| self.tape_strip(ui));
-
-        if self.show_dictionaries {
-            let mut add_clicked = false;
-            let mut state_changed = false;
-            egui::Panel::left("dictionaries")
-                .resizable(true)
-                .default_size(260.0)
-                .show(ui, |ui| {
-                    ui.add_space(4.0);
-                    if ui
-                        .button("Add dictionary...")
-                        .on_hover_text(
-                            "Copy a Plover .json or .py dictionary into Pluvialis. \
-                             The original is not moved or changed.",
-                        )
-                        .clicked()
-                    {
-                        add_clicked = true;
-                    }
-                    state_changed = self.dictionary_pane.ui(ui, &mut self.dictionaries);
-                });
-            if add_clicked {
-                self.add_dictionaries();
-            }
-            // A toggled checkbox is remembered so it does not have to be set
-            // again next launch.
-            if state_changed {
-                self.save_dictionary_state();
-            }
+        if screen == Screen::Home {
+            egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         }
+        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui, screen));
+        if screen.shows_tape() {
+            egui::Panel::right("tape")
+                .resizable(true)
+                .default_size(210.0)
+                .show(ui, |ui| self.tape_strip(ui));
+        }
+    }
 
+    /// The Home screen: the live typing document.
+    pub fn home(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show(ui, |ui| self.document(ui));
+    }
+
+    /// The Dictionary screen, with the whole width to itself.
+    pub fn dictionary(&mut self, ui: &mut egui::Ui) {
+        let mut add_clicked = false;
+        let mut state_changed = false;
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.add_space(4.0);
+            if ui
+                .button("Add dictionary...")
+                .on_hover_text(
+                    "Copy a Plover .json or .py dictionary into Pluvialis. The                      original is not moved or changed.",
+                )
+                .clicked()
+            {
+                add_clicked = true;
+            }
+            state_changed = self.dictionary_pane.ui(ui, &mut self.dictionaries);
+        });
+        if add_clicked {
+            self.add_dictionaries();
+        }
+        // A toggled checkbox is remembered so it does not have to be set again
+        // next launch.
+        if state_changed {
+            self.save_dictionary_state();
+        }
+    }
+
+    /// Windows floating above whichever screen is showing.
+    pub fn overlays(&mut self, ui: &mut egui::Ui, screen: Screen) {
+        // Unsaved work from a session that crashed is worth offering wherever
+        // she happens to be, not only on Home.
         self.recovery_prompt(ui);
-        self.history_window(ui);
+        if screen == Screen::Home {
+            self.history_window(ui);
+        }
     }
 
     fn document(&mut self, ui: &mut egui::Ui) {
@@ -1121,7 +1145,7 @@ impl LiveView {
             });
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
+    fn status_bar(&mut self, ui: &mut egui::Ui, screen: Screen) {
         // Counted only when the text has actually changed, but *sampled* every
         // frame regardless: the meter needs to see time passing to know that
         // writing has stopped.
@@ -1163,18 +1187,19 @@ impl LiveView {
                  nothing is typed anywhere.",
             );
 
-            ui.separator();
-            ui.toggle_value(&mut self.show_dictionaries, "Dictionaries")
-                .on_hover_text("Priority order, enable and disable, and lookup");
-
-            if ui
-                .toggle_value(&mut self.show_history, "History")
-                .on_hover_text("Earlier saved versions of this document")
-                .clicked()
-                && self.show_history
-            {
-                // Reading the directory once on open, rather than every frame.
-                self.history = self.storage.snapshots();
+            // History is about the open document, so it belongs with it.
+            if screen == Screen::Home {
+                ui.separator();
+                if ui
+                    .toggle_value(&mut self.show_history, "History")
+                    .on_hover_text("Earlier saved versions of this document")
+                    .clicked()
+                    && self.show_history
+                {
+                    // Reading the directory once on open, rather than every
+                    // frame.
+                    self.history = self.storage.snapshots();
+                }
             }
 
             if let Some(error) = &self.save_error {
@@ -1196,6 +1221,9 @@ impl LiveView {
             // Right aligned, so the counters keep their place as the status on
             // the left changes length between "Searching for a writer" and a
             // connected machine's name.
+            if screen != Screen::Home {
+                return;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 match self.meter.words_per_minute() {
                     // Nothing rather than "0 wpm" before there is enough

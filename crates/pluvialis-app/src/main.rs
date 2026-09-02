@@ -14,6 +14,9 @@ mod library;
 mod live;
 mod meter;
 mod paths;
+mod screens;
+mod settings_screen;
+mod stats_screen;
 mod storage;
 
 /// Reconnect to the terminal that launched us.
@@ -31,8 +34,8 @@ fn attach_parent_console() {
         CreateFileA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
     use windows::Win32::System::Console::{
-        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
-        STD_HANDLE, SetStdHandle,
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_HANDLE,
+        STD_OUTPUT_HANDLE, SetStdHandle,
     };
     use windows::core::PCSTR;
 
@@ -133,7 +136,14 @@ fn run_gui() -> eframe::Result {
     )
 }
 
+/// The window: a row of screens across the top, one of them showing.
+///
+/// Only the drawing is per screen. The machine, the translator, the document
+/// and autosave all keep running whichever screen is visible, because steno has
+/// to keep working while she is looking at her dictionaries or at nothing at
+/// all.
 struct PluvialisApp {
+    screen: screens::Screen,
     live: live::LiveView,
 }
 
@@ -143,20 +153,35 @@ impl PluvialisApp {
         // The scanner starts here and never stops while the app runs. There is
         // deliberately no connect button and no machine picker.
         live.start_machines(&cc.egui_ctx);
-        PluvialisApp { live }
+        PluvialisApp {
+            screen: screens::Screen::default(),
+            live,
+        }
     }
 }
 
 impl eframe::App for PluvialisApp {
     // Non-painting per-frame work belongs in `logic`, painting in `ui`.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.live.pump_machine(ctx);
+        // The visible screen is an input to where strokes go, so it is passed
+        // in rather than guessed at. See `screens::sink`.
+        self.live.pump_machine(ctx, self.screen);
     }
 
     // egui 0.35 replaced `update(&Context)` with `ui(&mut Ui)`. Most egui
     // examples online still show the old signature.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.live.ui(ui);
+        egui::Panel::top("nav").show(ui, |ui| screens::nav_bar(ui, &mut self.screen));
+
+        // Panels first, then whichever screen fills what is left.
+        self.live.chrome(ui, self.screen);
+        match self.screen {
+            screens::Screen::Home => self.live.home(ui),
+            screens::Screen::Dictionary => self.live.dictionary(ui),
+            screens::Screen::Settings => settings_screen::ui(ui),
+            screens::Screen::Stats => stats_screen::ui(ui),
+        }
+        self.live.overlays(ui, self.screen);
     }
 
     /// Save and record a clean exit, so the next start does not offer recovery
