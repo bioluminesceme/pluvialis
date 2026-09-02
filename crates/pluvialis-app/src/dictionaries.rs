@@ -48,6 +48,9 @@ pub struct DictionaryPane {
     target: usize,
     loaded: Option<Loaded>,
     edit_outline: String,
+    /// What the outline field held before it cleared itself on regaining
+    /// focus. Kept so clearing cannot silently throw the outline away.
+    cleared_outline: String,
     edit_translation: String,
     outline_focused: bool,
     /// The outcome of the last edit: `Ok` for a success line, `Err` for a
@@ -269,9 +272,10 @@ impl DictionaryPane {
 
         // The outline being changed from, shown as the hint once the field is
         // cleared, so it is never a mystery what a save would keep.
-        let outline_hint = match &self.loaded {
-            Some(loaded) => loaded.outline.clone(),
-            None => "PHO*EF".to_owned(),
+        let outline_hint = match (&self.loaded, self.cleared_outline.is_empty()) {
+            (Some(loaded), _) => loaded.outline.clone(),
+            (None, false) => self.cleared_outline.clone(),
+            (None, true) => "PHO*EF".to_owned(),
         };
 
         ui.horizontal(|ui| {
@@ -297,7 +301,7 @@ impl DictionaryPane {
         // An empty field with an entry loaded means "keep this outline",
         // which is what makes changing only the word possible after the
         // field has cleared itself.
-        let has_outline = !self.edit_outline.trim().is_empty() || self.loaded.is_some();
+        let has_outline = !self.effective_outline().is_empty();
         let can_save = has_outline && !self.edit_translation.is_empty();
 
         // The buttons get their own row rather than trailing the fields. On the
@@ -440,7 +444,18 @@ impl DictionaryPane {
     /// write PHOEF, and the field holds KAT/PHOEF. Clearing loses nothing,
     /// because the entry being edited is remembered in `loaded` and its outline
     /// stays visible as the hint.
+    /// Empty the outline field when it takes focus, so a chord can be
+    /// rewritten without deleting the old one first. Asked for directly.
+    ///
+    /// What was there is kept rather than dropped. Without that, clicking into
+    /// the field and clicking away again left a new entry with no outline at
+    /// all, which greyed out the save button with nothing on screen to say why:
+    /// the entry looked entered and was never written. That is exactly how
+    /// TKEPT was lost on 2026-09-02.
     fn outline_regained_focus(&mut self) {
+        if !self.edit_outline.trim().is_empty() {
+            self.cleared_outline = self.edit_outline.trim().to_owned();
+        }
         self.edit_outline.clear();
         self.edit_message = None;
     }
@@ -448,6 +463,7 @@ impl DictionaryPane {
     /// Drop the loaded entry and start a blank one.
     fn clear_editor(&mut self) {
         self.loaded = None;
+        self.cleared_outline.clear();
         self.edit_outline.clear();
         self.edit_translation.clear();
         self.edit_message = None;
@@ -457,9 +473,15 @@ impl DictionaryPane {
     /// outline when the field is empty.
     fn effective_outline(&self) -> String {
         let typed = self.edit_outline.trim();
-        match (typed.is_empty(), &self.loaded) {
-            (true, Some(loaded)) => loaded.outline.clone(),
-            _ => typed.to_owned(),
+        if !typed.is_empty() {
+            return typed.to_owned();
+        }
+        match &self.loaded {
+            // Editing an entry: an empty field means "keep this outline".
+            Some(loaded) => loaded.outline.clone(),
+            // A new entry: the field may have emptied itself when it regained
+            // focus, so fall back to whatever it held before that.
+            None => self.cleared_outline.clone(),
         }
     }
 
@@ -524,6 +546,9 @@ impl DictionaryPane {
                             outline: outline.clone(),
                         });
                         self.edit_outline = outline;
+                        // The entry is loaded now, so the loaded outline is
+                        // the fallback and the remembered one would shadow it.
+                        self.cleared_outline.clear();
                     }
                     EditKind::Remove => self.clear_editor(),
                 }
@@ -568,6 +593,55 @@ impl DictionaryPane {
 enum EditKind {
     Set,
     Remove,
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+
+    /// The outline field empties when it regains focus, so a chord can be
+    /// rewritten without deleting the old one first. What it held must survive
+    /// that, or a new entry ends up with no outline, the save button greys out
+    /// with nothing on screen to say why, and the entry is silently never
+    /// written. TKEPT was lost exactly this way on 2026-09-02.
+    #[test]
+    fn clicking_back_into_the_outline_field_does_not_lose_a_new_entry() {
+        let mut pane = DictionaryPane::new();
+        pane.edit_outline = "TKEPT".to_owned();
+        pane.edit_translation = "department".to_owned();
+
+        pane.outline_regained_focus();
+
+        assert!(pane.edit_outline.is_empty(), "the field clears, as asked");
+        assert_eq!(
+            pane.effective_outline(),
+            "TKEPT",
+            "but the outline is still what would be saved"
+        );
+    }
+
+    /// Writing a new chord after the field clears replaces the old one rather
+    /// than being ignored in favour of it.
+    #[test]
+    fn a_freshly_written_outline_wins_over_the_remembered_one() {
+        let mut pane = DictionaryPane::new();
+        pane.edit_outline = "TKEPT".to_owned();
+        pane.outline_regained_focus();
+        pane.edit_outline = "TKPAERT".to_owned();
+
+        assert_eq!(pane.effective_outline(), "TKPAERT");
+    }
+
+    /// Starting a new entry forgets the previous one entirely.
+    #[test]
+    fn clearing_the_editor_forgets_the_remembered_outline() {
+        let mut pane = DictionaryPane::new();
+        pane.edit_outline = "TKEPT".to_owned();
+        pane.outline_regained_focus();
+        pane.clear_editor();
+
+        assert_eq!(pane.effective_outline(), "");
+    }
 }
 
 #[cfg(test)]
