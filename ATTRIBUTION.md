@@ -45,6 +45,21 @@ handle handling, the output router, the document model, and the dictionary
 library. Some of these exist specifically because Plover's behaviour was the
 problem being solved.
 
+## The icon
+
+**`crates/pluvialis-app/assets/icon-source.png`** is a flat illustration of a
+golden plover, generated with ChatGPT by the author of this project. No third
+party holds copyright in it, so it ships under the project's own licence like
+everything else here.
+
+`icon.png` and `icon.ico` are built from it by `tools/make_icon.py`, which cuts
+the white page away, keeps the rounded corners, and stores a different crop at
+each icon size so the small ones stay readable. Run that script after changing
+the source art, then rebuild, since `build.rs` embeds `icon.ico` into the
+executable.
+
+Nothing about the icon comes from Plover.
+
 ## Why not call it "a Rust port of Plover"
 
 It was considered and rejected on 2026-07-20, on accuracy grounds in both
