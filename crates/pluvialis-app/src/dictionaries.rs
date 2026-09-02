@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use pluvialis_core::{Dictionary, DictionaryStack, Stroke, move_entry, remove_entry, set_entry};
+use pluvialis_core::{
+    Dictionary, DictionaryStack, Stroke, move_entry, remove_entry, set_entry, swap_entries,
+};
 
 /// One entry a lookup found, and the file it lives in.
 struct Hit {
@@ -50,6 +52,30 @@ struct Loaded {
     outline: String,
 }
 
+/// An entry ticked for swapping.
+///
+/// Carries its own copy of the details rather than an index into the results,
+/// because the two entries in a swap normally hold different words and so
+/// cannot both be on screen at once: one is found and ticked, then the other is
+/// searched for. The ticks have to survive the query changing, and the ticked
+/// entries have to stay visible while it does.
+#[derive(Clone, PartialEq, Eq)]
+struct Picked {
+    path: PathBuf,
+    dictionary: String,
+    outline: String,
+    value: String,
+}
+
+/// What a result row was asked to do this frame.
+#[derive(Default)]
+struct RowAction {
+    /// Load this entry into the editor.
+    clicked: bool,
+    /// Tick or untick it for swapping.
+    toggled: bool,
+}
+
 #[derive(Default)]
 pub struct DictionaryPane {
     query: String,
@@ -71,6 +97,13 @@ pub struct DictionaryPane {
     /// The outcome of the last edit: `Ok` for a success line, `Err` for a
     /// refusal to show in red.
     edit_message: Option<Result<String, String>>,
+
+    // Swapping.
+    /// Entries ticked to have their words exchanged. Any number can be ticked;
+    /// the swap only runs at exactly two, so a third tick cannot quietly change
+    /// which pair is acted on.
+    picked: Vec<Picked>,
+    swap_message: Option<Result<String, String>>,
 }
 
 /// A short name for a dictionary, for the list.
@@ -227,7 +260,7 @@ impl DictionaryPane {
         changed
     }
 
-    fn lookup(&mut self, ui: &mut egui::Ui, dictionaries: &DictionaryStack) {
+    fn lookup(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) {
         let response = ui.add(
             egui::TextEdit::singleline(&mut self.query)
                 .hint_text("KAT, or a word")
@@ -242,10 +275,11 @@ impl DictionaryPane {
             ui.label(egui::RichText::new(error).small().weak());
         }
 
-        // Which entry a clicked row should load into the editor. Collected here
-        // and applied after the loop, since the loop only borrows the results.
+        // What the rows were asked to do. Collected here and applied after the
+        // loop, since the loop only borrows the results.
         let mut fill: Option<Loaded> = None;
         let mut fill_value = String::new();
+        let mut toggle: Option<Picked> = None;
 
         // Capped so the editor below stays on screen; the results scroll within.
         egui::ScrollArea::vertical()
@@ -256,9 +290,13 @@ impl DictionaryPane {
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new("Means").small().weak());
                     for hit in &self.forward {
-                        if row(ui, hit) {
+                        let action = row(ui, hit, is_picked(&self.picked, hit));
+                        if action.clicked {
                             fill = Some(hit.into());
                             fill_value = hit.value.clone();
+                        }
+                        if action.toggled {
+                            toggle = Some(hit.into());
                         }
                     }
                 }
@@ -271,19 +309,158 @@ impl DictionaryPane {
                             .weak(),
                     );
                     for hit in &self.reverse {
-                        if row(ui, hit) {
+                        let action = row(ui, hit, is_picked(&self.picked, hit));
+                        if action.clicked {
                             fill = Some(hit.into());
                             fill_value = hit.value.clone();
+                        }
+                        if action.toggled {
+                            toggle = Some(hit.into());
                         }
                     }
                 }
             });
+
+        if let Some(picked) = toggle {
+            self.toggle_pick(picked);
+        }
 
         if let Some(loaded) = fill {
             self.edit_outline = loaded.outline.clone();
             self.edit_translation = fill_value;
             self.loaded = Some(loaded);
             self.edit_message = None;
+        }
+
+        self.swap(ui, dictionaries);
+    }
+
+    /// Tick or untick an entry for swapping.
+    ///
+    /// The same entry can appear twice in one result list, once as what its
+    /// strokes mean and once as a way to write the word, so identity is the
+    /// file plus the outline rather than the row.
+    fn toggle_pick(&mut self, picked: Picked) {
+        match self
+            .picked
+            .iter()
+            .position(|p| p.path == picked.path && p.outline == picked.outline)
+        {
+            Some(index) => {
+                self.picked.remove(index);
+            }
+            None => self.picked.push(picked),
+        }
+        self.swap_message = None;
+    }
+
+    /// The ticked entries, and the button that exchanges their words.
+    fn swap(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) {
+        if self.picked.is_empty() {
+            return;
+        }
+
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Ticked to swap").small().weak());
+
+        let mut untick: Option<usize> = None;
+        for (index, pick) in self.picked.iter().enumerate() {
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .small_button("x")
+                    .on_hover_text("Untick this entry")
+                    .clicked()
+                {
+                    untick = Some(index);
+                }
+                ui.label(egui::RichText::new(&pick.outline).monospace());
+                ui.label(format!("{:?}", pick.value));
+                ui.label(egui::RichText::new(&pick.dictionary).small().weak());
+            });
+        }
+        if let Some(index) = untick {
+            self.picked.remove(index);
+            self.swap_message = None;
+        }
+
+        let ready = self.swap_ready();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(ready, egui::Button::new("Swap the two ticked entries"))
+                .on_hover_text("Exchange the words these two outlines produce")
+                .clicked()
+            {
+                self.apply_swap(dictionaries);
+            }
+            if ui
+                .button("Clear")
+                .on_hover_text("Untick everything")
+                .clicked()
+            {
+                self.picked.clear();
+                self.swap_message = None;
+            }
+        });
+
+        if let Some(reason) = self.swap_blocked() {
+            ui.label(egui::RichText::new(reason).small().weak());
+        }
+
+        match &self.swap_message {
+            Some(Ok(text)) => {
+                ui.label(egui::RichText::new(text).small());
+            }
+            Some(Err(text)) => {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    egui::RichText::new(text).small(),
+                );
+            }
+            None => {}
+        }
+    }
+
+    fn swap_ready(&self) -> bool {
+        self.swap_blocked().is_none()
+    }
+
+    /// Why the swap button is disabled, or `None` when it is not.
+    ///
+    /// Same dictionary only: a swap across two files cannot be one write, and
+    /// two writes can half-succeed and leave both entries holding the same
+    /// word. Refused with the reason rather than silently greyed out.
+    fn swap_blocked(&self) -> Option<&'static str> {
+        match self.picked.as_slice() {
+            [] | [_] => Some("Tick one more entry."),
+            [a, b] if a.path != b.path => Some("Both entries must be in the same dictionary."),
+            [a, b] if a.outline == b.outline => Some("Those are the same entry."),
+            [_, _] => None,
+            _ => Some("Tick exactly two. Untick the extras."),
+        }
+    }
+
+    fn apply_swap(&mut self, dictionaries: &mut DictionaryStack) {
+        let [first, second] = match self.picked.as_slice() {
+            [first, second] => [first.clone(), second.clone()],
+            // The button is disabled in every other case; this is belt and
+            // braces so a future caller cannot swap the wrong pair.
+            _ => return,
+        };
+        let path = first.path.clone();
+
+        match swap_entries(&path, &first.outline, &second.outline) {
+            Ok(_) => {
+                self.reload(dictionaries, &path);
+                self.invalidate();
+                self.picked.clear();
+                self.swap_message = Some(Ok(format!(
+                    "Swapped {} and {} in {}",
+                    first.outline,
+                    second.outline,
+                    short_name(&path)
+                )));
+            }
+            Err(e) => self.swap_message = Some(Err(e.to_string())),
         }
     }
 
@@ -603,6 +780,17 @@ impl DictionaryPane {
     }
 }
 
+impl From<&Hit> for Picked {
+    fn from(hit: &Hit) -> Self {
+        Picked {
+            path: hit.path.clone(),
+            dictionary: hit.dictionary.clone(),
+            outline: hit.outline.clone(),
+            value: hit.value.clone(),
+        }
+    }
+}
+
 impl From<&Hit> for Loaded {
     fn from(hit: &Hit) -> Self {
         Loaded {
@@ -617,9 +805,18 @@ impl From<&Hit> for Loaded {
 ///
 /// The outline and the word are both clickable, because either is a reasonable
 /// thing to aim at when the intent is "edit that one".
-fn row(ui: &mut egui::Ui, hit: &Hit) -> bool {
-    let mut clicked = false;
+fn row(ui: &mut egui::Ui, hit: &Hit, picked: bool) -> RowAction {
+    let mut action = RowAction::default();
     ui.horizontal_wrapped(|ui| {
+        let mut ticked = picked;
+        if ui
+            .checkbox(&mut ticked, "")
+            .on_hover_text("Tick two entries to exchange their words")
+            .changed()
+        {
+            action.toggled = true;
+        }
+
         let outline = egui::RichText::new(&hit.outline).monospace();
         let value = egui::RichText::new(format!("{:?}", hit.value));
         let (outline, value) = match hit.winning {
@@ -631,17 +828,25 @@ fn row(ui: &mut egui::Ui, hit: &Hit) -> bool {
             false => "Click to edit this entry. Shadowed: a higher dictionary answers first.",
         };
 
-        clicked |= ui
+        action.clicked |= ui
             .add(egui::Label::new(outline).sense(egui::Sense::click()))
             .on_hover_text(hover)
             .clicked();
-        clicked |= ui
+        action.clicked |= ui
             .add(egui::Label::new(value).sense(egui::Sense::click()))
             .on_hover_text(hover)
             .clicked();
         ui.label(egui::RichText::new(&hit.dictionary).small().weak());
     });
-    clicked
+    action
+}
+
+/// Whether this entry is already ticked. Identity is the file plus the outline,
+/// not the row, since one entry can appear in both result lists.
+fn is_picked(picked: &[Picked], hit: &Hit) -> bool {
+    picked
+        .iter()
+        .any(|p| p.path == hit.path && p.outline == hit.outline)
 }
 
 #[derive(Clone, Copy)]
@@ -911,6 +1116,129 @@ mod tests {
         assert!(pane.loaded.is_none());
         assert_eq!(pane.edit_outline, "");
         assert!(matches!(pane.edit_message, Some(Ok(_))));
+    }
+
+    fn pick(path: &Path, outline: &str, value: &str) -> Picked {
+        Picked {
+            path: path.to_path_buf(),
+            dictionary: short_name(path),
+            outline: outline.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+
+    #[test]
+    fn ticking_an_entry_twice_unticks_it() {
+        let dict = temp_dict("tick", "{\n\"KAT\": \"cat\"\n}\n");
+        let mut pane = DictionaryPane::new();
+
+        pane.toggle_pick(pick(&dict, "KAT", "cat"));
+        assert_eq!(pane.picked.len(), 1);
+        pane.toggle_pick(pick(&dict, "KAT", "cat"));
+        assert!(pane.picked.is_empty());
+    }
+
+    #[test]
+    fn one_entry_shown_in_both_lists_counts_as_one_tick() {
+        // Query KAT matches the outline KAT and, case insensitively, the word
+        // "kat", so the same entry appears under Means and under Written as.
+        let dict = temp_dict("bothlists", "{\n\"KAT\": \"kat\"\n}\n");
+        let mut pane = DictionaryPane {
+            query: "KAT".to_owned(),
+            ..DictionaryPane::new()
+        };
+        pane.recompute(&stack(&[&dict]));
+        assert_eq!(pane.forward.len(), 1);
+        assert_eq!(pane.reverse.len(), 1);
+
+        pane.toggle_pick((&pane.forward[0]).into());
+
+        assert_eq!(pane.picked.len(), 1);
+        assert!(is_picked(&pane.picked, &pane.reverse[0]), "the same entry");
+    }
+
+    #[test]
+    fn a_swap_runs_only_at_exactly_two_ticks() {
+        let dict = temp_dict(
+            "exactlytwo",
+            "{\n\"KAT\": \"cart\",\n\"KAERT\": \"cat\",\n\"TKOG\": \"dog\"\n}\n",
+        );
+        let mut pane = DictionaryPane::new();
+
+        assert!(pane.swap_blocked().is_some(), "nothing ticked");
+
+        pane.toggle_pick(pick(&dict, "KAT", "cart"));
+        assert!(pane.swap_blocked().is_some(), "one ticked");
+
+        pane.toggle_pick(pick(&dict, "KAERT", "cat"));
+        assert!(pane.swap_ready(), "two ticked, same dictionary");
+
+        pane.toggle_pick(pick(&dict, "TKOG", "dog"));
+        assert!(
+            pane.swap_blocked().is_some(),
+            "a third tick blocks the swap"
+        );
+    }
+
+    #[test]
+    fn a_swap_across_two_dictionaries_is_refused() {
+        let english = temp_dict("swapen", "{\n\"KAT\": \"cat\"\n}\n");
+        let dutch = temp_dict("swapnl", "{\n\"KAT\": \"kat\"\n}\n");
+        let mut pane = DictionaryPane::new();
+
+        pane.toggle_pick(pick(&english, "KAT", "cat"));
+        pane.toggle_pick(pick(&dutch, "KAT", "kat"));
+
+        assert_eq!(
+            pane.swap_blocked(),
+            Some("Both entries must be in the same dictionary.")
+        );
+    }
+
+    #[test]
+    fn swapping_two_ticked_entries_exchanges_their_words() {
+        let dict = temp_dict("doswap", "{\n\"KAT\": \"cart\",\n\"KAERT\": \"cat\"\n}\n");
+        let mut stack = stack(&[&dict]);
+        let mut pane = DictionaryPane::new();
+        pane.toggle_pick(pick(&dict, "KAT", "cart"));
+        pane.toggle_pick(pick(&dict, "KAERT", "cat"));
+
+        pane.apply_swap(&mut stack);
+
+        let map = read_map(&dict);
+        assert_eq!(map["KAT"], "cat");
+        assert_eq!(map["KAERT"], "cart");
+        // Live in the stack, not only on disk.
+        assert_eq!(
+            stack.lookup(&Stroke::parse_outline("KAT").unwrap()),
+            Some("cat")
+        );
+        assert!(pane.picked.is_empty(), "ticks cleared after the swap");
+        assert!(matches!(pane.swap_message, Some(Ok(_))));
+    }
+
+    #[test]
+    fn ticks_survive_searching_for_the_second_entry() {
+        // The two entries in a swap hold different words, so they cannot both
+        // be on screen at once. The first tick has to outlive the query.
+        let dict = temp_dict("survive", "{\n\"KAT\": \"cart\",\n\"KAERT\": \"cat\"\n}\n");
+        let loaded = stack(&[&dict]);
+        let mut pane = DictionaryPane {
+            query: "cart".to_owned(),
+            ..DictionaryPane::new()
+        };
+        pane.recompute(&loaded);
+        pane.toggle_pick((&pane.reverse[0]).into());
+
+        pane.query = "cat".to_owned();
+        pane.recompute(&loaded);
+
+        assert_eq!(pane.picked.len(), 1, "still ticked after a new search");
+        assert_eq!(pane.picked[0].outline, "KAT");
+        assert_eq!(
+            pane.reverse[0].outline, "KAERT",
+            "the second one is on screen"
+        );
     }
 
     #[test]

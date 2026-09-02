@@ -56,6 +56,11 @@ pub enum EditError {
     /// being edited and the user never asked to lose it.
     #[error("{outline:?} already exists in {path}")]
     AlreadyExists { outline: String, path: PathBuf },
+    /// Both sides of a swap resolved to the same entry. The same outline can
+    /// appear twice in a result list, once as what the strokes mean and once as
+    /// a way to write the word, and both are the same line in the file.
+    #[error("{outline:?} cannot be swapped with itself")]
+    SameEntry { outline: String, path: PathBuf },
     /// The rewrite produced something other than the dictionary intended.
     /// Nothing has been written when this is returned.
     #[error("refusing to write {path}: {reason}")]
@@ -70,6 +75,19 @@ pub struct EditReport {
     pub previous: Option<String>,
     /// Where the original was saved. `None` when nothing was written (setting an
     /// entry to the value it already has).
+    pub backup: Option<PathBuf>,
+}
+
+/// What a swap did, enough to report it.
+#[derive(Debug)]
+pub struct SwapReport {
+    pub path: PathBuf,
+    /// The two outlines as the file spells them, each with the translation it
+    /// holds now.
+    pub first: (String, String),
+    pub second: (String, String),
+    /// Where the original was saved. `None` when nothing was written, which is
+    /// the case when both entries already had the same translation.
     pub backup: Option<PathBuf>,
 }
 
@@ -241,6 +259,86 @@ pub fn move_entry(
     Ok(EditReport {
         path,
         previous: Some(previous),
+        backup: Some(backup),
+    })
+}
+
+/// Exchange the translations of two entries in the same file.
+///
+/// One write, one backup, one verification, for the same reason as
+/// [`move_entry`]: two separate writes can half-succeed, and here the failure
+/// leaves both entries holding the same word.
+///
+/// Same file only. A cross-dictionary swap cannot be one write, and the caller
+/// is better placed to say why it was refused.
+pub fn swap_entries(
+    path: impl AsRef<Path>,
+    first: &str,
+    second: &str,
+) -> Result<SwapReport, EditError> {
+    let path = path.as_ref().to_path_buf();
+
+    let text = read(&path)?;
+    let entries = parse(&path, &text)?;
+
+    let Some(first_key) = stored_key(&entries, first) else {
+        return Err(EditError::NotFound {
+            outline: first.to_owned(),
+            path,
+        });
+    };
+    let Some(second_key) = stored_key(&entries, second) else {
+        return Err(EditError::NotFound {
+            outline: second.to_owned(),
+            path,
+        });
+    };
+    if first_key == second_key {
+        return Err(EditError::SameEntry {
+            outline: first_key,
+            path,
+        });
+    }
+
+    let first_value = entries[&first_key].clone();
+    let second_value = entries[&second_key].clone();
+
+    // Nothing to exchange. Do not rewrite the file or spend a backup slot.
+    if first_value == second_value {
+        return Ok(SwapReport {
+            path,
+            first: (first_key, first_value),
+            second: (second_key, second_value),
+            backup: None,
+        });
+    }
+
+    let updated = replace_value(&text, &first_key, &second_value)
+        .and_then(|text| replace_value(&text, &second_key, &first_value))
+        .ok_or_else(|| verification_failed(&path, "could not locate both entry lines"))?;
+
+    let reparsed = parse_verify(&path, &updated)?;
+    verify_untouched(
+        &path,
+        &entries,
+        &reparsed,
+        &[&first_key, &second_key],
+        entries.len(),
+    )?;
+    if reparsed.get(&first_key) != Some(&second_value)
+        || reparsed.get(&second_key) != Some(&first_value)
+    {
+        return Err(verification_failed(
+            &path,
+            &format!("{first_key:?} and {second_key:?} were not exchanged"),
+        ));
+    }
+
+    let backup = write_with_backup(&path, &text, &updated)?;
+    Ok(SwapReport {
+        path,
+        first: (first_key, second_value),
+        second: (second_key, first_value),
         backup: Some(backup),
     })
 }
@@ -668,6 +766,108 @@ mod tests {
         let map = read_map(&path);
         assert_eq!(map.len(), 1);
         assert_eq!(map["KAERT"], "cat");
+    }
+
+    #[test]
+    fn swapping_exchanges_two_translations() {
+        let path = temp("swap", "{\n\"KAT\": \"cart\",\n\"KAERT\": \"cat\"\n}\n");
+        let report = swap_entries(&path, "KAT", "KAERT").unwrap();
+
+        let map = read_map(&path);
+        assert_eq!(map["KAT"], "cat");
+        assert_eq!(map["KAERT"], "cart");
+        assert_eq!(report.first, ("KAT".to_owned(), "cat".to_owned()));
+        assert_eq!(report.second, ("KAERT".to_owned(), "cart".to_owned()));
+    }
+
+    #[test]
+    fn a_swap_leaves_every_other_entry_alone() {
+        let path = temp(
+            "swapothers",
+            "{\n\"KAT\": \"cart\",\n\"TKOG\": \"dog\",\n\"KAERT\": \"cat\"\n}\n",
+        );
+        swap_entries(&path, "KAT", "KAERT").unwrap();
+
+        let map = read_map(&path);
+        assert_eq!(map.len(), 3);
+        assert_eq!(map["TKOG"], "dog");
+    }
+
+    #[test]
+    fn a_swap_keeps_the_line_formatting() {
+        let path = temp(
+            "swapformat",
+            "{\n  \"KAT\": \"cart\",\n  \"KAERT\": \"cat\"\n}\n",
+        );
+        swap_entries(&path, "KAT", "KAERT").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\n  \"KAT\": \"cat\",\n  \"KAERT\": \"cart\"\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_swap_finds_entries_however_their_keys_are_spelled() {
+        let path = temp(
+            "swapspelling",
+            "{\n\"TK-LS\": \"tools\",\n\"KAT\": \"cat\"\n}\n",
+        );
+        swap_entries(&path, "TKLS", "KAT").unwrap();
+
+        let map = read_map(&path);
+        assert_eq!(map.len(), 2, "no duplicate keys");
+        assert_eq!(map["TK-LS"], "cat");
+        assert_eq!(map["KAT"], "tools");
+    }
+
+    #[test]
+    fn swapping_an_entry_with_itself_is_refused() {
+        let contents = "{\n\"KAT\": \"cat\"\n}\n";
+        let path = temp("swapself", contents);
+        assert!(matches!(
+            swap_entries(&path, "KAT", "KAT"),
+            Err(EditError::SameEntry { .. })
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    }
+
+    #[test]
+    fn swapping_with_a_missing_entry_touches_nothing() {
+        let contents = "{\n\"KAT\": \"cat\"\n}\n";
+        let path = temp("swapmissing", contents);
+        assert!(matches!(
+            swap_entries(&path, "KAT", "TKOG"),
+            Err(EditError::NotFound { .. })
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    }
+
+    #[test]
+    fn swapping_two_identical_translations_writes_nothing() {
+        let contents = "{\n\"KAT\": \"cat\",\n\"KAERT\": \"cat\"\n}\n";
+        let path = temp("swapnoop", contents);
+        let report = swap_entries(&path, "KAT", "KAERT").unwrap();
+
+        assert!(report.backup.is_none(), "no backup for a no-op");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    }
+
+    #[test]
+    fn a_swap_is_reversible_from_its_backup() {
+        let contents = "{\n\"KAT\": \"cart\",\n\"KAERT\": \"cat\"\n}\n";
+        let path = temp("swapbackup", contents);
+        let report = swap_entries(&path, "KAT", "KAERT").unwrap();
+        let backup = std::fs::read_to_string(report.backup.unwrap()).unwrap();
+        assert_eq!(backup, contents);
+    }
+
+    #[test]
+    fn swapping_twice_returns_to_the_original() {
+        let contents = "{\n\"KAT\": \"cart\",\n\"KAERT\": \"cat\"\n}\n";
+        let path = temp("swaptwice", contents);
+        swap_entries(&path, "KAT", "KAERT").unwrap();
+        swap_entries(&path, "KAT", "KAERT").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
     }
 
     #[test]
