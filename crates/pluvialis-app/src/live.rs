@@ -162,6 +162,9 @@ pub struct LiveView {
     /// Whether the Settings screen is waiting for the second click that
     /// actually deletes the counts.
     confirm_stats_reset: bool,
+    /// Python dictionaries the user picked that have not been copied in yet,
+    /// because a Python dictionary is a program and she is asked first.
+    pending_python: Vec<std::path::PathBuf>,
 
     dictionary_pane: crate::dictionaries::DictionaryPane,
     dictionary_screen: crate::dictionary_screen::DictionaryScreen,
@@ -221,6 +224,7 @@ impl LiveView {
             config,
             stats,
             confirm_stats_reset: false,
+            pending_python: Vec::new(),
             dictionary_pane: crate::dictionaries::DictionaryPane::new(),
             dictionary_screen: crate::dictionary_screen::DictionaryScreen::new(),
             entry_index: crate::entry_index::EntryIndex::new(),
@@ -604,8 +608,18 @@ impl LiveView {
             return;
         };
 
+        // A `.py` dictionary is a program, not a list of words, so it is not
+        // copied in until she has been told that and said yes. Everything else
+        // is data and goes straight in.
+        let (python, stored): (Vec<_>, Vec<_>) = files.into_iter().partition(|file| {
+            file.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("py"))
+        });
+        self.pending_python.extend(python);
+
         let mut errors = Vec::new();
-        for file in &files {
+        for file in &stored {
             match crate::library::import(file) {
                 Ok(destination) => self.load_added(&destination, &mut errors),
                 Err(e) => errors.push(e.to_string()),
@@ -620,6 +634,105 @@ impl LiveView {
 
         // A dictionary re-added after being removed keeps its remembered state.
         self.apply_saved_enabled();
+    }
+
+    /// Ask before copying in a Python dictionary, because it is a program.
+    ///
+    /// Plover has the same trust model and does not ask. Pluvialis asks because
+    /// the cost of being wrong is unbounded and the cost of a dialog is one
+    /// click. The wording avoids the words sandbox, arbitrary and execute: the
+    /// person reading it wants to write shorthand, not to assess a threat
+    /// model, so it says what the file can do in the terms of what she can do.
+    fn python_warning(&mut self, ui: &mut egui::Ui) {
+        if self.pending_python.is_empty() {
+            return;
+        }
+
+        let mut add = false;
+        let mut cancel = false;
+        let names: Vec<String> = self
+            .pending_python
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.display().to_string())
+            })
+            .collect();
+
+        egui::Window::new("Add a Python dictionary?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.set_max_width(460.0);
+                for name in &names {
+                    ui.label(egui::RichText::new(name).strong().monospace());
+                }
+                ui.add_space(8.0);
+                ui.label(
+                    "This is not a list of words. It is a small program that \
+                     works out what to write as you type.",
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    "Pluvialis will run it on your computer as you, so it can do \
+                     anything you can do: open, change or delete your files, and \
+                     use your internet connection. Nothing checks it first.",
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    "Only add one if you trust whoever made it, the same way you \
+                     would only install a program from someone you trust. If you \
+                     are not sure where this file came from, choose Cancel. \
+                     Nothing is lost by saying no.",
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(
+                        "It will be added switched off. You decide when to turn \
+                         it on.",
+                    )
+                    .small()
+                    .weak(),
+                );
+
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    // Cancel first and on its own, so the safe answer is the
+                    // easy one to hit.
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    ui.add_space(12.0);
+                    if ui.button("I trust this file, add it").clicked() {
+                        add = true;
+                    }
+                });
+            });
+
+        if !add && !cancel {
+            return;
+        }
+
+        let picked = std::mem::take(&mut self.pending_python);
+        if cancel {
+            log::info!("declined {} Python dictionaries", picked.len());
+            return;
+        }
+
+        let mut errors = Vec::new();
+        for file in &picked {
+            match crate::library::import(file) {
+                Ok(destination) => self.load_added(&destination, &mut errors),
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+        if !errors.is_empty() {
+            self.load_error = Some(errors.join("; "));
+        }
+        self.apply_saved_enabled();
+        self.rebuild_entry_index();
     }
 
     /// Set each dictionary's enabled state and priority order from what was
@@ -1138,6 +1251,9 @@ impl LiveView {
         // Unsaved work from a session that crashed is worth offering wherever
         // she happens to be, not only on Home.
         self.recovery_prompt(ui);
+        // Shown wherever she is: it is a question about something she just
+        // asked for, and it blocks the import until answered.
+        self.python_warning(ui);
         if screen == Screen::Home {
             self.history_window(ui);
         }
