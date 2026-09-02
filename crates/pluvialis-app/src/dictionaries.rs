@@ -269,7 +269,7 @@ impl DictionaryPane {
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.edit_outline)
                     .hint_text(outline_hint)
-                    .desired_width(220.0),
+                    .desired_width(200.0),
             );
             if response.gained_focus() {
                 self.outline_regained_focus();
@@ -280,31 +280,56 @@ impl DictionaryPane {
             ui.add(
                 egui::TextEdit::singleline(&mut self.edit_translation)
                     .hint_text("move")
-                    .desired_width(260.0),
+                    .desired_width(ui.available_width().max(120.0)),
             );
+        });
 
-            // An empty field with an entry loaded means "keep this outline",
-            // which is what makes changing only the word possible after the
-            // field has cleared itself.
-            let has_outline = !self.edit_outline.trim().is_empty() || self.loaded.is_some();
-            let can_save = has_outline && !self.edit_translation.is_empty();
-            let save_hint = match &self.loaded {
-                Some(_) => "Save the change. A different outline moves the entry.",
-                None => "Add the entry, or change its word if the outline already exists",
-            };
-            if ui
-                .add_enabled(can_save, egui::Button::new("Save"))
-                .on_hover_text(save_hint)
-                .clicked()
-            {
-                changed |= self.apply_edit(dictionaries, EditKind::Set);
+        // An empty field with an entry loaded means "keep this outline",
+        // which is what makes changing only the word possible after the
+        // field has cleared itself.
+        let has_outline = !self.edit_outline.trim().is_empty() || self.loaded.is_some();
+        let can_save = has_outline && !self.edit_translation.is_empty();
+
+        // The buttons get their own row rather than trailing the fields. On the
+        // row they used to share, the bottom panel is already narrowed by the
+        // file list and the tape, so a Save button after two text fields was
+        // pushed off the right edge on a smaller window: the one control that
+        // must never be hard to find.
+        ui.horizontal(|ui| match self.loaded.is_some() {
+            true => {
+                if ui
+                    .add_enabled(can_save, egui::Button::new("Save changes"))
+                    .on_hover_text("Save the change. A different outline moves the entry.")
+                    .clicked()
+                {
+                    changed |= self.apply_edit(dictionaries, EditKind::Set);
+                }
+                if ui
+                    .add_enabled(has_outline, egui::Button::new("Delete"))
+                    .on_hover_text("Remove this outline from the dictionary it lives in")
+                    .clicked()
+                {
+                    changed |= self.apply_edit(dictionaries, EditKind::Remove);
+                }
             }
-            if ui
-                .add_enabled(has_outline, egui::Button::new("Delete"))
-                .on_hover_text("Remove this outline from the dictionary it lives in")
-                .clicked()
-            {
-                changed |= self.apply_edit(dictionaries, EditKind::Remove);
+            // Nothing exists yet to delete, so only one button belongs here.
+            false => {
+                if ui
+                    .add_enabled(can_save, egui::Button::new("Add entry"))
+                    .on_hover_text(
+                        "Add the entry, or change its word if the outline already exists",
+                    )
+                    .clicked()
+                {
+                    changed |= self.apply_edit(dictionaries, EditKind::Set);
+                }
+                if !can_save {
+                    ui.label(
+                        egui::RichText::new("Fill in both fields to add an entry.")
+                            .small()
+                            .weak(),
+                    );
+                }
             }
         });
 

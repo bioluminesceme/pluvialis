@@ -920,7 +920,7 @@ impl LiveView {
 
         egui::Panel::bottom("entry-editor")
             .resizable(true)
-            .default_size(96.0)
+            .default_size(132.0)
             .show(ui, |ui| {
                 ui.add_space(4.0);
                 entries_changed = self.dictionary_pane.editor(ui, &mut self.dictionaries);
