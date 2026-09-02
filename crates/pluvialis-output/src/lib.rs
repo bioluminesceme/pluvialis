@@ -32,3 +32,27 @@ pub enum OutputError {
     #[error("malformed key combo {0:?}")]
     MalformedCombo(String),
 }
+
+/// Which window currently has focus, as an opaque handle.
+///
+/// Used to decide whether a correction's backspaces may be sent. They erase
+/// text the previous batch wrote, so they are safe only when the window in
+/// front is the same one that text went into. Comparing handles is what makes
+/// "undo the word I just wrote in Notepad" work while still refusing to eat
+/// text in a window this program has never typed in.
+///
+/// `None` when there is no foreground window, and always on platforms with no
+/// keystroke output, where the caller has nothing to send anyway.
+#[cfg(windows)]
+pub fn foreground_window() -> Option<isize> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    // No error path: the documented failure is a null handle, not an Err.
+    let window = unsafe { GetForegroundWindow() };
+    (!window.is_invalid()).then_some(window.0 as isize)
+}
+
+#[cfg(not(windows))]
+pub fn foreground_window() -> Option<isize> {
+    None
+}

@@ -151,6 +151,12 @@ pub struct LiveView {
     /// Where the previous batch went, so a batch that crosses the boundary does
     /// not try to backspace into the other destination's text.
     last_destination: Destination,
+    /// The window this program last typed into, and how many characters it put
+    /// there that have not been erased again. Together they decide whether a
+    /// correction's backspaces may be sent: only into the same window, and only
+    /// as far back as this program's own text goes.
+    typed_target: Option<isize>,
+    typed_chars: usize,
     /// The tray toggle. With this off, steno still translates and still shows
     /// on the tape, but nothing is typed anywhere.
     output_enabled: bool,
@@ -219,6 +225,8 @@ impl LiveView {
             load_error: None,
             focused: true,
             last_destination: Destination::Document,
+            typed_target: None,
+            typed_chars: 0,
             output_enabled: config.settings.output_at_launch,
             config,
             stats,
@@ -861,39 +869,64 @@ impl LiveView {
     }
 
     /// Send one batch to exactly one destination.
+    /// Send one batch to exactly one destination.
+    ///
+    /// A correction's backspaces erase text the *previous* batch wrote, so
+    /// sending them anywhere else would delete characters this program never
+    /// wrote, in someone else's document. What decides it is not "did focus
+    /// change", which was too blunt and threw away every first undo after
+    /// switching windows, but "is this the window I typed that text into, and
+    /// does my own text reach back that far".
     fn deliver(&mut self, edit: &mut StenoEdit, destination: Destination) {
-        // A correction's backspaces refer to text the *previous* batch wrote.
-        // If that went somewhere else, deleting here would eat characters this
-        // program never wrote, in someone else's document. Drop them and keep
-        // only the insertion.
-        if destination != self.last_destination && (edit.backspaces > 0 || edit.backspace_keys > 0)
-        {
-            log::debug!(
-                "focus changed mid correction, dropping {} backspaces rather than \
-                 deleting text in the other destination",
-                edit.backspace_keys
-            );
-            edit.backspaces = 0;
-            edit.backspace_keys = 0;
-        }
-        self.last_destination = destination;
-
         match destination {
             Destination::Document => {
+                // The document keeps its own text, so the only unsafe case is a
+                // correction arriving straight after a batch that went to
+                // another window.
+                if self.last_destination != Destination::Document {
+                    edit.backspaces = 0;
+                    edit.backspace_keys = 0;
+                }
                 self.document.apply(edit);
                 self.layout = None;
                 self.push_caret = true;
             }
             Destination::OtherWindow => {
                 if !self.output_enabled {
+                    // Nothing was typed, so nothing there is ours to erase.
+                    self.typed_chars = 0;
+                    self.last_destination = destination;
                     return;
                 }
+
+                let target = pluvialis_output::foreground_window();
+                if target.is_none() || target != self.typed_target {
+                    // A window this program has not written in. Its text
+                    // belongs to the user, so the insertion goes in and the
+                    // backspaces do not.
+                    self.typed_target = target;
+                    self.typed_chars = 0;
+                }
+
+                let allowed = erasable(edit.backspace_keys, self.typed_chars);
+                if allowed < edit.backspace_keys {
+                    log::debug!(
+                        "holding back {} backspaces: only {} characters here are ours",
+                        edit.backspace_keys - allowed,
+                        self.typed_chars
+                    );
+                }
+                edit.backspace_keys = allowed;
+                edit.backspaces = allowed;
+                self.typed_chars = self.typed_chars - allowed + edit.text.chars().count();
+
                 #[cfg(windows)]
                 if let Err(e) = self.keyboard.send_edit(edit.backspace_keys, &edit.text) {
                     log::warn!("could not type into the focused window: {e}");
                 }
             }
         }
+        self.last_destination = destination;
     }
 
     fn clear(&mut self) {
@@ -1439,6 +1472,16 @@ impl LiveView {
     }
 }
 
+/// How many of a correction's backspaces may actually be sent.
+///
+/// Never more than this program has typed into the window in front. Erasing
+/// past that point would delete the user's own text, which is not this
+/// program's to take back, and is the one mistake in the output path that
+/// cannot be undone.
+fn erasable(requested: usize, ours: usize) -> usize {
+    requested.min(ours)
+}
+
 /// Where a dictionary sorts, given the saved priority order.
 ///
 /// A file the order does not mention sorts last rather than first. A dictionary
@@ -1564,6 +1607,36 @@ mod tests {
                 result: n.to_string(),
             })
             .collect()
+    }
+
+    /// Undoing a word written into another window has to erase it there.
+    ///
+    /// This is the case that was broken: the old rule dropped every backspace
+    /// whenever the destination differed from the previous batch's, so the
+    /// first undo after looking at Pluvialis and going back did nothing.
+    /// Nine characters were written into that window, so nine may come back.
+    #[test]
+    fn a_word_this_program_typed_can_be_erased_again() {
+        assert_eq!(erasable(9, 9), 9);
+    }
+
+    /// A window this program has never typed in. Its text is the user's, and
+    /// erasing it is the one mistake in the output path with no undo.
+    #[test]
+    fn nothing_is_erased_in_a_window_we_have_not_written_in() {
+        assert_eq!(erasable(9, 0), 0);
+    }
+
+    /// A correction longer than this program's own text stops at the boundary
+    /// rather than eating into what was already there.
+    #[test]
+    fn erasing_stops_where_our_own_text_stops() {
+        assert_eq!(erasable(20, 6), 6);
+    }
+
+    #[test]
+    fn an_insertion_with_no_backspaces_is_unaffected() {
+        assert_eq!(erasable(0, 40), 0);
     }
 
     /// Priority decides which dictionary wins when two define the same
