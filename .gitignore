@@ -14,6 +14,9 @@
 pluvialis.log
 config.toml
 /pluvialis-config.json
+# The counts behind the Stats screen. It holds the words she writes, so it
+# stays local like the dictionaries and documents do.
+/pluvialis-stats.json
 
 # Working and AI-collaboration docs: private notes, plan, decisions, and the
 # instructions Claude Code works from. Not published.
