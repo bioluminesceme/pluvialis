@@ -6,7 +6,7 @@ It runs on Windows only.
 
 Pluvialis translates chords from a steno writer, either into its own editor or into whatever other application has focus.
 
-![The Pluvialis window: a top bar with Open, Save and Save As, an editor showing live steno text, a stroke tape on the right listing each outline and what it produced, and a status bar showing the connected writer, word count, and speed.](docs/screenshot.png)
+![The Pluvialis window: a row of screens across the top (Home, Dictionary, Settings, Stats) with Home selected, a toolbar with Open, Save and Save As, an editor showing live steno text, a stroke tape on the right listing each outline and what it produced, and a status bar showing the connected writer, the number of dictionary entries loaded, the word count and the speed.](docs/screenshot.png)
 
 ## Requirements
 
