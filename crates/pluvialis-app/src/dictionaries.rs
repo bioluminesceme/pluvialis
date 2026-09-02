@@ -1,4 +1,5 @@
-//! The dictionary pane: priority order, enable and disable, and lookup.
+//! The dictionary list and the entry editor, which sit either side of the
+//! table on the Dictionary screen.
 //!
 //! Priority is the list order, highest first, and it is load bearing: three of
 //! the outlines captured from the user's writer exist in both her dictionaries
@@ -9,11 +10,12 @@
 //! Reordering and enabling change only this session; persisting them is a
 //! separate step. Editing entries writes through `pluvialis_core::edit`.
 //!
-//! A lookup answers both questions at once: what an outline means, and every
-//! way a word can be written. Both directions run for every query, because a
-//! great many words are also valid steno ("the", "to", "pro", "hat"), and
-//! answering only the direction the query happens to parse as hides the other
-//! one with no sign that it was skipped.
+//! Editing happens in one docked strip rather than in the table's own cells.
+//! Three reasons, all specific to this program: every write reparses and
+//! verifies a 93,000 line file, so it cannot fire per keystroke; changing an
+//! outline is a move rather than a set; and the outline field has to be the one
+//! unambiguous place that accepts raw steno from the writer, which a grid of a
+//! hundred thousand possibly-steno cells would destroy.
 
 use std::path::{Path, PathBuf};
 
@@ -23,22 +25,7 @@ use pluvialis_core::{
     Dictionary, DictionaryStack, Stroke, move_entry, remove_entry, set_entry, swap_entries,
 };
 
-/// One entry a lookup found, and the file it lives in.
-struct Hit {
-    /// Which file to edit. A path rather than an index, because the list can be
-    /// reordered between finding the entry and clicking it.
-    path: PathBuf,
-    dictionary: String,
-    /// Canonical rendering. The file may spell its key differently (`TK-LS` for
-    /// `TKLS`); `pluvialis_core::edit` resolves that when it writes.
-    outline: String,
-    value: String,
-    /// Whether this is the entry the translator would actually use for these
-    /// strokes. The others are shadowed by priority order, or disabled.
-    winning: bool,
-}
-
-/// The entry the editor is working on, once one has been loaded from a result.
+/// The entry the editor is working on, once one has been loaded from the table.
 ///
 /// Held separately from the text fields so the fields can be edited, or
 /// cleared, without losing which entry is being changed. That is what makes
@@ -52,41 +39,18 @@ struct Loaded {
     outline: String,
 }
 
-/// An entry ticked for swapping.
-///
-/// Carries its own copy of the details rather than an index into the results,
-/// because the two entries in a swap normally hold different words and so
-/// cannot both be on screen at once: one is found and ticked, then the other is
-/// searched for. The ticks have to survive the query changing, and the ticked
-/// entries have to stay visible while it does.
-#[derive(Clone, PartialEq, Eq)]
-struct Picked {
+/// An outline one key away from the loaded one, and what it writes today.
+struct Variant {
     path: PathBuf,
     dictionary: String,
     outline: String,
-    value: String,
-}
-
-/// What a result row was asked to do this frame.
-#[derive(Default)]
-struct RowAction {
-    /// Load this entry into the editor.
-    clicked: bool,
-    /// Tick or untick it for swapping.
-    toggled: bool,
+    word: String,
+    /// Only a swap within one file is a single verified write.
+    same_file: bool,
 }
 
 #[derive(Default)]
 pub struct DictionaryPane {
-    query: String,
-    /// Recomputed only when the query or the stack changes, since a reverse
-    /// lookup walks every entry in every dictionary.
-    forward: Vec<Hit>,
-    reverse: Vec<Hit>,
-    last_query: Option<String>,
-    parse_error: Option<String>,
-
-    // The editor.
     /// Which JSON dictionary a brand new entry goes into. Ignored once an
     /// existing entry is loaded, which is edited where it already lives.
     target: usize,
@@ -97,42 +61,18 @@ pub struct DictionaryPane {
     /// The outcome of the last edit: `Ok` for a success line, `Err` for a
     /// refusal to show in red.
     edit_message: Option<Result<String, String>>,
-
-    // Swapping.
-    /// Entries ticked to have their words exchanged. Any number can be ticked;
-    /// the swap only runs at exactly two, so a third tick cannot quietly change
-    /// which pair is acted on.
-    picked: Vec<Picked>,
-    swap_message: Option<Result<String, String>>,
 }
 
 /// A short name for a dictionary, for the list.
-fn short_name(path: &std::path::Path) -> String {
+pub fn short_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// Whether `path` is the dictionary the translator answers these strokes from.
-///
-/// Not "holds the same text as the winner": two dictionaries can hold the same
-/// translation, and only one of them is the one being used.
-fn is_winner(dictionaries: &DictionaryStack, path: &Path, strokes: &[Stroke]) -> bool {
-    dictionaries
-        .dictionaries()
-        .iter()
-        .find(|d| d.enabled && d.lookup(strokes).is_some())
-        .is_some_and(|d| d.path == path)
-}
-
 impl DictionaryPane {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Force the next frame to recompute, after the stack changed underneath.
-    fn invalidate(&mut self) {
-        self.last_query = None;
     }
 
     /// Whether a field here is waiting to be filled by the writer.
@@ -158,10 +98,23 @@ impl DictionaryPane {
         true
     }
 
+    /// Put an entry from the table into the editor.
+    pub fn load_entry(&mut self, path: &Path, outline: &str, word: &str) {
+        self.loaded = Some(Loaded {
+            path: path.to_path_buf(),
+            dictionary: short_name(path),
+            outline: outline.to_owned(),
+        });
+        self.edit_outline = outline.to_owned();
+        self.edit_translation = word.to_owned();
+        self.edit_message = None;
+    }
+
+    /// The dictionary list, with priority order and enable checkboxes.
+    ///
     /// Returns whether the enabled state or order changed this frame, so the
     /// caller can persist it.
-    pub fn ui(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) -> bool {
-        self.outline_focused = false;
+    pub fn list(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) -> bool {
         ui.add_space(4.0);
         ui.strong("Dictionaries");
         ui.label(
@@ -171,22 +124,6 @@ impl DictionaryPane {
         );
         ui.separator();
 
-        let changed = self.list(ui, dictionaries);
-
-        ui.add_space(8.0);
-        ui.separator();
-        ui.strong("Look up");
-        self.lookup(ui, dictionaries);
-
-        ui.add_space(8.0);
-        ui.separator();
-        ui.strong("Edit");
-        self.editor(ui, dictionaries);
-
-        changed
-    }
-
-    fn list(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) -> bool {
         let count = dictionaries.dictionaries().len();
         // Applied after the loop: reordering mid iteration would renumber the
         // rows being drawn.
@@ -263,284 +200,17 @@ impl DictionaryPane {
             }
         }
 
-        if changed {
-            self.invalidate();
-        }
         changed
-    }
-
-    fn lookup(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) {
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut self.query)
-                .hint_text("KAT, or a word")
-                .desired_width(f32::INFINITY),
-        );
-
-        if response.changed() || self.last_query.as_deref() != Some(self.query.as_str()) {
-            self.recompute(dictionaries);
-        }
-
-        if let Some(error) = &self.parse_error {
-            ui.label(egui::RichText::new(error).small().weak());
-        }
-
-        // What the rows were asked to do. Collected here and applied after the
-        // loop, since the loop only borrows the results.
-        let mut fill: Option<Loaded> = None;
-        let mut fill_value = String::new();
-        let mut toggle: Option<Picked> = None;
-
-        // Capped so the editor below stays on screen; the results scroll within.
-        egui::ScrollArea::vertical()
-            .max_height(220.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                if !self.forward.is_empty() {
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Means").small().weak());
-                    for hit in &self.forward {
-                        let action = row(ui, hit, is_picked(&self.picked, hit));
-                        if action.clicked {
-                            fill = Some(hit.into());
-                            fill_value = hit.value.clone();
-                        }
-                        if action.toggled {
-                            toggle = Some(hit.into());
-                        }
-                    }
-                }
-
-                if !self.reverse.is_empty() {
-                    ui.add_space(6.0);
-                    ui.label(
-                        egui::RichText::new(format!("Written as ({})", self.reverse.len()))
-                            .small()
-                            .weak(),
-                    );
-                    for hit in &self.reverse {
-                        let action = row(ui, hit, is_picked(&self.picked, hit));
-                        if action.clicked {
-                            fill = Some(hit.into());
-                            fill_value = hit.value.clone();
-                        }
-                        if action.toggled {
-                            toggle = Some(hit.into());
-                        }
-                    }
-                }
-            });
-
-        if let Some(picked) = toggle {
-            self.toggle_pick(picked);
-        }
-
-        if let Some(loaded) = fill {
-            self.edit_outline = loaded.outline.clone();
-            self.edit_translation = fill_value;
-            self.loaded = Some(loaded);
-            self.edit_message = None;
-        }
-
-        self.swap(ui, dictionaries);
-    }
-
-    /// Tick or untick an entry for swapping.
-    ///
-    /// The same entry can appear twice in one result list, once as what its
-    /// strokes mean and once as a way to write the word, so identity is the
-    /// file plus the outline rather than the row.
-    fn toggle_pick(&mut self, picked: Picked) {
-        match self
-            .picked
-            .iter()
-            .position(|p| p.path == picked.path && p.outline == picked.outline)
-        {
-            Some(index) => {
-                self.picked.remove(index);
-            }
-            None => self.picked.push(picked),
-        }
-        self.swap_message = None;
-    }
-
-    /// The ticked entries, and the button that exchanges their words.
-    fn swap(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) {
-        if self.picked.is_empty() {
-            return;
-        }
-
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new("Ticked to swap").small().weak());
-
-        let mut untick: Option<usize> = None;
-        for (index, pick) in self.picked.iter().enumerate() {
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .small_button("x")
-                    .on_hover_text("Untick this entry")
-                    .clicked()
-                {
-                    untick = Some(index);
-                }
-                ui.label(egui::RichText::new(&pick.outline).monospace());
-                ui.label(format!("{:?}", pick.value));
-                ui.label(egui::RichText::new(&pick.dictionary).small().weak());
-            });
-        }
-        if let Some(index) = untick {
-            self.picked.remove(index);
-            self.swap_message = None;
-        }
-
-        let ready = self.swap_ready();
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(ready, egui::Button::new("Swap the two ticked entries"))
-                .on_hover_text("Exchange the words these two outlines produce")
-                .clicked()
-            {
-                self.apply_swap(dictionaries);
-            }
-            if ui
-                .button("Clear")
-                .on_hover_text("Untick everything")
-                .clicked()
-            {
-                self.picked.clear();
-                self.swap_message = None;
-            }
-        });
-
-        if let Some(reason) = self.swap_blocked() {
-            ui.label(egui::RichText::new(reason).small().weak());
-        }
-
-        match &self.swap_message {
-            Some(Ok(text)) => {
-                ui.label(egui::RichText::new(text).small());
-            }
-            Some(Err(text)) => {
-                ui.colored_label(
-                    ui.visuals().error_fg_color,
-                    egui::RichText::new(text).small(),
-                );
-            }
-            None => {}
-        }
-    }
-
-    fn swap_ready(&self) -> bool {
-        self.swap_blocked().is_none()
-    }
-
-    /// Why the swap button is disabled, or `None` when it is not.
-    ///
-    /// Same dictionary only: a swap across two files cannot be one write, and
-    /// two writes can half-succeed and leave both entries holding the same
-    /// word. Refused with the reason rather than silently greyed out.
-    fn swap_blocked(&self) -> Option<&'static str> {
-        match self.picked.as_slice() {
-            [] | [_] => Some("Tick one more entry."),
-            [a, b] if a.path != b.path => Some("Both entries must be in the same dictionary."),
-            [a, b] if a.outline == b.outline => Some("Those are the same entry."),
-            [_, _] => None,
-            _ => Some("Tick exactly two. Untick the extras."),
-        }
-    }
-
-    fn apply_swap(&mut self, dictionaries: &mut DictionaryStack) {
-        let [first, second] = match self.picked.as_slice() {
-            [first, second] => [first.clone(), second.clone()],
-            // The button is disabled in every other case; this is belt and
-            // braces so a future caller cannot swap the wrong pair.
-            _ => return,
-        };
-        let path = first.path.clone();
-
-        match swap_entries(&path, &first.outline, &second.outline) {
-            Ok(_) => {
-                self.reload(dictionaries, &path);
-                self.invalidate();
-                self.picked.clear();
-                self.swap_message = Some(Ok(format!(
-                    "Swapped {} and {} in {}",
-                    first.outline,
-                    second.outline,
-                    short_name(&path)
-                )));
-            }
-            Err(e) => self.swap_message = Some(Err(e.to_string())),
-        }
-    }
-
-    fn recompute(&mut self, dictionaries: &DictionaryStack) {
-        self.last_query = Some(self.query.clone());
-        self.forward.clear();
-        self.reverse.clear();
-        self.parse_error = None;
-
-        let query = self.query.trim();
-        if query.is_empty() {
-            return;
-        }
-
-        // What the outline means, when the query is one. Most queries that are
-        // not steno fail here, which is expected: "cat" is a perfectly good
-        // reverse lookup and a hopeless outline.
-        let parsed = Stroke::parse_outline(query).ok();
-        if let Some(strokes) = &parsed {
-            let outline = Stroke::render_outline(strokes);
-            for dictionary in dictionaries.dictionaries() {
-                if let Some(value) = dictionary.lookup(strokes) {
-                    self.forward.push(Hit {
-                        path: dictionary.path.clone(),
-                        dictionary: short_name(&dictionary.path),
-                        outline: outline.clone(),
-                        value: value.to_owned(),
-                        winning: is_winner(dictionaries, &dictionary.path, strokes),
-                    });
-                }
-            }
-        }
-
-        // Every way the query can be written. Runs whether or not the query
-        // parsed as steno, so a word that is also a valid outline still shows
-        // its strokes.
-        for dictionary in dictionaries.dictionaries() {
-            for (outline, value) in dictionary.reverse_lookup(query) {
-                self.reverse.push(Hit {
-                    path: dictionary.path.clone(),
-                    dictionary: short_name(&dictionary.path),
-                    outline: Stroke::render_outline(outline),
-                    value: value.to_owned(),
-                    winning: is_winner(dictionaries, &dictionary.path, outline),
-                });
-            }
-        }
-
-        // Entries that match the query exactly come first, then shortest
-        // outline: the brief is what the user wants to learn, and an entry that
-        // differs in capitalisation is a weaker answer than one that does not.
-        self.reverse.sort_by(|a, b| {
-            (a.value != query)
-                .cmp(&(b.value != query))
-                .then(a.outline.len().cmp(&b.outline.len()))
-                .then(a.outline.cmp(&b.outline))
-        });
-
-        if self.forward.is_empty() && self.reverse.is_empty() {
-            self.parse_error = Some(match parsed {
-                Some(_) => "No entry for that outline, and nothing is written that way".to_owned(),
-                None => "Not valid steno, and no entry produces that text".to_owned(),
-            });
-        }
     }
 
     /// Add, change, move or remove an entry. Writes go to Pluvialis's own
     /// dictionary copies, never the user's Plover folder, and every write backs
     /// up the file first and is verified before it lands; see
     /// `pluvialis_core::edit`.
-    fn editor(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) {
+    ///
+    /// Returns whether any dictionary changed, so the caller can rebuild what
+    /// it has cached about them.
+    pub fn editor(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) -> bool {
         let names: Vec<String> = dictionaries
             .dictionaries()
             .iter()
@@ -552,11 +222,13 @@ impl DictionaryPane {
                     .small()
                     .weak(),
             );
-            return;
+            return false;
         }
         if self.target >= names.len() {
             self.target = 0;
         }
+
+        let mut changed = false;
 
         // A loaded entry is edited where it already lives, so there is nothing
         // to choose. Only a new entry needs a destination.
@@ -605,23 +277,20 @@ impl DictionaryPane {
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.edit_outline)
                     .hint_text(outline_hint)
-                    .desired_width(f32::INFINITY),
+                    .desired_width(220.0),
             );
             if response.gained_focus() {
                 self.outline_regained_focus();
             }
             self.outline_focused = response.has_focus();
-        });
-        ui.horizontal(|ui| {
-            ui.label("Word   ");
+
+            ui.label("Word");
             ui.add(
                 egui::TextEdit::singleline(&mut self.edit_translation)
                     .hint_text("move")
-                    .desired_width(f32::INFINITY),
+                    .desired_width(260.0),
             );
-        });
 
-        ui.horizontal(|ui| {
             // An empty field with an entry loaded means "keep this outline",
             // which is what makes changing only the word possible after the
             // field has cleared itself.
@@ -636,14 +305,14 @@ impl DictionaryPane {
                 .on_hover_text(save_hint)
                 .clicked()
             {
-                self.apply_edit(dictionaries, EditKind::Set);
+                changed |= self.apply_edit(dictionaries, EditKind::Set);
             }
             if ui
                 .add_enabled(has_outline, egui::Button::new("Delete"))
                 .on_hover_text("Remove this outline from the dictionary it lives in")
                 .clicked()
             {
-                self.apply_edit(dictionaries, EditKind::Remove);
+                changed |= self.apply_edit(dictionaries, EditKind::Remove);
             }
         });
 
@@ -658,6 +327,105 @@ impl DictionaryPane {
                 );
             }
             None => {}
+        }
+
+        changed |= self.star_variants(ui, dictionaries);
+        changed
+    }
+
+    /// Outlines one key away from the loaded one, with a button to exchange
+    /// their words.
+    ///
+    /// This is the reason the feature exists. `KAT` and `KA*T` are the same
+    /// chord with one extra key, and the starred one is harder to write, so
+    /// whichever word is written more often should own the plain outline.
+    /// Swapping them is a deliberate tuning step, not a repair.
+    fn star_variants(&mut self, ui: &mut egui::Ui, dictionaries: &mut DictionaryStack) -> bool {
+        let Some(loaded) = self.loaded.clone() else {
+            return false;
+        };
+        let Ok(strokes) = Stroke::parse_outline(&loaded.outline) else {
+            return false;
+        };
+
+        let mut variants: Vec<Variant> = Vec::new();
+        for variant in Stroke::star_variants(&strokes) {
+            let outline = Stroke::render_outline(&variant);
+            for dictionary in dictionaries.dictionaries() {
+                if let Some(word) = dictionary.lookup(&variant) {
+                    variants.push(Variant {
+                        path: dictionary.path.clone(),
+                        dictionary: short_name(&dictionary.path),
+                        outline: outline.clone(),
+                        word: word.to_owned(),
+                        same_file: dictionary.path == loaded.path,
+                    });
+                }
+            }
+        }
+        if variants.is_empty() {
+            return false;
+        }
+
+        // Collected in the closure and acted on after it, so the swap does not
+        // need a mutable borrow of the pane while the rows are being drawn.
+        let mut swap: Option<(PathBuf, String)> = None;
+        ui.add_space(2.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                egui::RichText::new(format!("One key away from {}:", loaded.outline))
+                    .small()
+                    .weak(),
+            );
+
+            for variant in &variants {
+                ui.label(egui::RichText::new(&variant.outline).monospace());
+                ui.label(format!("{:?}", variant.word));
+                ui.label(egui::RichText::new(&variant.dictionary).small().weak());
+                let hover = match variant.same_file {
+                    true => "Exchange the words these two outlines write",
+                    false => "Both entries must be in the same dictionary.",
+                };
+                if ui
+                    .add_enabled(variant.same_file, egui::Button::new("Swap").small())
+                    .on_hover_text(hover)
+                    .clicked()
+                {
+                    swap = Some((variant.path.clone(), variant.outline.clone()));
+                }
+            }
+        });
+
+        let Some((path, second)) = swap else {
+            return false;
+        };
+        self.swap_with(dictionaries, &path, &loaded.outline, &second)
+    }
+
+    /// Exchange the words two outlines write, in one verified write.
+    fn swap_with(
+        &mut self,
+        dictionaries: &mut DictionaryStack,
+        path: &Path,
+        first: &str,
+        second: &str,
+    ) -> bool {
+        match swap_entries(path, first, second) {
+            Ok(report) => {
+                self.reload(dictionaries, path);
+                // The state afterwards, because that is the thing being
+                // decided: which outline now writes which word.
+                self.edit_message = Some(Ok(format!(
+                    "{} now writes {:?}, {} writes {:?}",
+                    report.first.0, report.first.1, report.second.0, report.second.1
+                )));
+                self.edit_translation = report.first.1.clone();
+                true
+            }
+            Err(e) => {
+                self.edit_message = Some(Err(e.to_string()));
+                false
+            }
         }
     }
 
@@ -691,11 +459,11 @@ impl DictionaryPane {
         }
     }
 
-    fn apply_edit(&mut self, dictionaries: &mut DictionaryStack, kind: EditKind) {
+    fn apply_edit(&mut self, dictionaries: &mut DictionaryStack, kind: EditKind) -> bool {
         let outline = self.effective_outline();
         let loaded = self.loaded.clone();
 
-        // An entry loaded from a result is edited in its own file. Anything
+        // An entry loaded from the table is edited in its own file. Anything
         // else is a new entry, and goes where the combo says, so adding an
         // outline that already exists elsewhere can deliberately shadow it.
         let path = match (&loaded, kind) {
@@ -714,7 +482,7 @@ impl DictionaryPane {
                     None => {
                         self.edit_message =
                             Some(Err(format!("{outline} is not in any editable dictionary")));
-                        return;
+                        return false;
                     }
                 }
             }
@@ -741,7 +509,6 @@ impl DictionaryPane {
         match result {
             Ok(message) => {
                 self.reload(dictionaries, &path);
-                self.invalidate();
                 match kind {
                     // Keep editing the entry that was just saved, under
                     // whatever outline it now has, so a second save is another
@@ -757,8 +524,12 @@ impl DictionaryPane {
                     EditKind::Remove => self.clear_editor(),
                 }
                 self.edit_message = Some(Ok(message));
+                true
             }
-            Err(e) => self.edit_message = Some(Err(e.to_string())),
+            Err(e) => {
+                self.edit_message = Some(Err(e.to_string()));
+                false
+            }
         }
     }
 
@@ -789,75 +560,6 @@ impl DictionaryPane {
     }
 }
 
-impl From<&Hit> for Picked {
-    fn from(hit: &Hit) -> Self {
-        Picked {
-            path: hit.path.clone(),
-            dictionary: hit.dictionary.clone(),
-            outline: hit.outline.clone(),
-            value: hit.value.clone(),
-        }
-    }
-}
-
-impl From<&Hit> for Loaded {
-    fn from(hit: &Hit) -> Self {
-        Loaded {
-            path: hit.path.clone(),
-            dictionary: hit.dictionary.clone(),
-            outline: hit.outline.clone(),
-        }
-    }
-}
-
-/// One result row. Returns whether it was clicked.
-///
-/// The outline and the word are both clickable, because either is a reasonable
-/// thing to aim at when the intent is "edit that one".
-fn row(ui: &mut egui::Ui, hit: &Hit, picked: bool) -> RowAction {
-    let mut action = RowAction::default();
-    ui.horizontal_wrapped(|ui| {
-        let mut ticked = picked;
-        if ui
-            .checkbox(&mut ticked, "")
-            .on_hover_text("Tick two entries to exchange their words")
-            .changed()
-        {
-            action.toggled = true;
-        }
-
-        let outline = egui::RichText::new(&hit.outline).monospace();
-        let value = egui::RichText::new(format!("{:?}", hit.value));
-        let (outline, value) = match hit.winning {
-            true => (outline.strong(), value.strong()),
-            false => (outline.weak(), value.weak()),
-        };
-        let hover = match hit.winning {
-            true => "Click to edit this entry",
-            false => "Click to edit this entry. Shadowed: a higher dictionary answers first.",
-        };
-
-        action.clicked |= ui
-            .add(egui::Label::new(outline).sense(egui::Sense::click()))
-            .on_hover_text(hover)
-            .clicked();
-        action.clicked |= ui
-            .add(egui::Label::new(value).sense(egui::Sense::click()))
-            .on_hover_text(hover)
-            .clicked();
-        ui.label(egui::RichText::new(&hit.dictionary).small().weak());
-    });
-    action
-}
-
-/// Whether this entry is already ticked. Identity is the file plus the outline,
-/// not the row, since one entry can appear in both result lists.
-fn is_picked(picked: &[Picked], hit: &Hit) -> bool {
-    picked
-        .iter()
-        .any(|p| p.path == hit.path && p.outline == hit.outline)
-}
-
 #[derive(Clone, Copy)]
 enum EditKind {
     Set,
@@ -869,7 +571,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    fn temp_dict(name: &str, json: &str) -> std::path::PathBuf {
+    fn temp_dict(name: &str, json: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
             "pluvialis-pane-{name}-{}.json",
             std::time::SystemTime::now()
@@ -895,7 +597,7 @@ mod tests {
 
     #[test]
     fn a_dictionary_is_named_by_its_file_rather_than_its_whole_path() {
-        let path = std::path::Path::new(r"C:\Users\you\AppData\Local\plover\plover\cb.json");
+        let path = Path::new(r"C:\Users\you\AppData\Local\plover\plover\cb.json");
         assert_eq!(short_name(path), "cb.json");
     }
 
@@ -912,11 +614,10 @@ mod tests {
             ..DictionaryPane::new()
         };
 
-        pane.apply_edit(&mut stack, EditKind::Set);
+        assert!(pane.apply_edit(&mut stack, EditKind::Set));
 
         assert_eq!(read_map(&high)["KAT"], "cat");
         assert_eq!(read_map(&selected)["KAT"], "kitten");
-        assert!(matches!(pane.edit_message, Some(Ok(_))));
     }
 
     #[test]
@@ -966,15 +667,8 @@ mod tests {
     #[test]
     fn clearing_the_field_does_not_lose_the_entry_being_edited() {
         let dict = temp_dict("keepsloaded", "{\n\"KAT\": \"cat\"\n}\n");
-        let mut pane = DictionaryPane {
-            loaded: Some(Loaded {
-                path: dict.clone(),
-                dictionary: short_name(&dict),
-                outline: "KAT".to_owned(),
-            }),
-            edit_outline: "KAT".to_owned(),
-            ..DictionaryPane::new()
-        };
+        let mut pane = DictionaryPane::new();
+        pane.load_entry(&dict, "KAT", "cat");
 
         pane.outline_regained_focus();
 
@@ -987,90 +681,14 @@ mod tests {
     }
 
     #[test]
-    fn a_word_that_is_also_valid_steno_is_answered_both_ways() {
-        // "TO" parses as steno, so the old pane answered only the forward
-        // direction and never said how the word itself is written.
-        let dict = temp_dict("bothways", "{\n\"TO\": \"toe\",\n\"TOU\": \"to\"\n}\n");
-        let mut pane = DictionaryPane {
-            query: "TO".to_owned(),
-            ..DictionaryPane::new()
-        };
-
-        pane.recompute(&stack(&[&dict]));
-
-        assert_eq!(pane.forward.len(), 1, "TO is an outline meaning toe");
-        assert_eq!(pane.forward[0].value, "toe");
-        assert_eq!(pane.reverse.len(), 1, "and the word to is written TOU");
-        assert_eq!(pane.reverse[0].outline, "TOU");
-        assert!(pane.parse_error.is_none());
-    }
-
-    #[test]
-    fn capitalisation_does_not_hide_an_outline_and_exact_matches_rank_first() {
-        let dict = temp_dict("case", "{\n\"THE\": \"The\",\n\"-T\": \"the\"\n}\n");
-        let mut pane = DictionaryPane {
-            query: "the".to_owned(),
-            ..DictionaryPane::new()
-        };
-
-        pane.recompute(&stack(&[&dict]));
-
-        assert_eq!(pane.reverse.len(), 2);
-        assert_eq!(pane.reverse[0].value, "the", "exact match first");
-        assert_eq!(pane.reverse[1].value, "The");
-    }
-
-    #[test]
-    fn every_outline_for_a_word_is_listed_shortest_first() {
-        let dict = temp_dict(
-            "allstrokes",
-            "{\n\"KAT\": \"cat\",\n\"KAERT\": \"cat\",\n\"KAT/KAT\": \"cat\"\n}\n",
-        );
-        let mut pane = DictionaryPane {
-            query: "cat".to_owned(),
-            ..DictionaryPane::new()
-        };
-
-        pane.recompute(&stack(&[&dict]));
-
-        let outlines: Vec<&str> = pane.reverse.iter().map(|h| h.outline.as_str()).collect();
-        assert_eq!(outlines, ["KAT", "KAERT", "KAT/KAT"]);
-    }
-
-    #[test]
-    fn the_same_word_in_two_dictionaries_is_listed_once_per_dictionary() {
-        // Both are real, separately editable entries. Collapsing them would
-        // hide one of the two files the user might need to change.
-        let high = temp_dict("dupehigh", "{\n\"KAT\": \"cat\"\n}\n");
-        let low = temp_dict("dupelow", "{\n\"KAT\": \"cat\"\n}\n");
-        let mut pane = DictionaryPane {
-            query: "cat".to_owned(),
-            ..DictionaryPane::new()
-        };
-
-        pane.recompute(&stack(&[&high, &low]));
-
-        assert_eq!(pane.reverse.len(), 2);
-        assert!(pane.reverse[0].winning, "the higher dictionary answers");
-        assert!(!pane.reverse[1].winning, "the lower one is shadowed");
-    }
-
-    #[test]
     fn changing_the_outline_of_a_loaded_entry_moves_it() {
         let dict = temp_dict("moveit", "{\n\"KAT\": \"cat\",\n\"TKOG\": \"dog\"\n}\n");
         let mut stack = stack(&[&dict]);
-        let mut pane = DictionaryPane {
-            loaded: Some(Loaded {
-                path: dict.clone(),
-                dictionary: short_name(&dict),
-                outline: "KAT".to_owned(),
-            }),
-            edit_outline: "KAERT".to_owned(),
-            edit_translation: "cat".to_owned(),
-            ..DictionaryPane::new()
-        };
+        let mut pane = DictionaryPane::new();
+        pane.load_entry(&dict, "KAT", "cat");
+        pane.edit_outline = "KAERT".to_owned();
 
-        pane.apply_edit(&mut stack, EditKind::Set);
+        assert!(pane.apply_edit(&mut stack, EditKind::Set));
 
         let map = read_map(&dict);
         assert_eq!(map.len(), 2, "moved, not duplicated");
@@ -1084,22 +702,18 @@ mod tests {
     fn a_loaded_entry_is_saved_where_it_lives_not_where_the_combo_points() {
         let owning = temp_dict("owning", "{\n\"KAT\": \"cat\"\n}\n");
         let other = temp_dict("other", "{\n}\n");
+        let mut stack = stack(&[&owning, &other]);
+
         // The combo points at the second dictionary, which is where a new
         // entry would go. This one is not new.
-        let mut stack = stack(&[&owning, &other]);
         let mut pane = DictionaryPane {
             target: 1,
-            loaded: Some(Loaded {
-                path: owning.clone(),
-                dictionary: short_name(&owning),
-                outline: "KAT".to_owned(),
-            }),
-            edit_outline: "KAT".to_owned(),
-            edit_translation: "kitten".to_owned(),
             ..DictionaryPane::new()
         };
+        pane.load_entry(&owning, "KAT", "cat");
+        pane.edit_translation = "kitten".to_owned();
 
-        pane.apply_edit(&mut stack, EditKind::Set);
+        assert!(pane.apply_edit(&mut stack, EditKind::Set));
 
         assert_eq!(read_map(&owning)["KAT"], "kitten");
         assert!(read_map(&other).is_empty());
@@ -1109,145 +723,14 @@ mod tests {
     fn deleting_a_loaded_entry_clears_the_editor() {
         let dict = temp_dict("delloaded", "{\n\"KAT\": \"cat\"\n}\n");
         let mut stack = stack(&[&dict]);
-        let mut pane = DictionaryPane {
-            loaded: Some(Loaded {
-                path: dict.clone(),
-                dictionary: short_name(&dict),
-                outline: "KAT".to_owned(),
-            }),
-            edit_translation: "cat".to_owned(),
-            ..DictionaryPane::new()
-        };
+        let mut pane = DictionaryPane::new();
+        pane.load_entry(&dict, "KAT", "cat");
 
-        pane.apply_edit(&mut stack, EditKind::Remove);
+        assert!(pane.apply_edit(&mut stack, EditKind::Remove));
 
         assert!(read_map(&dict).is_empty());
         assert!(pane.loaded.is_none());
         assert_eq!(pane.edit_outline, "");
-        assert!(matches!(pane.edit_message, Some(Ok(_))));
-    }
-
-    fn pick(path: &Path, outline: &str, value: &str) -> Picked {
-        Picked {
-            path: path.to_path_buf(),
-            dictionary: short_name(path),
-            outline: outline.to_owned(),
-            value: value.to_owned(),
-        }
-    }
-
-    #[test]
-    fn ticking_an_entry_twice_unticks_it() {
-        let dict = temp_dict("tick", "{\n\"KAT\": \"cat\"\n}\n");
-        let mut pane = DictionaryPane::new();
-
-        pane.toggle_pick(pick(&dict, "KAT", "cat"));
-        assert_eq!(pane.picked.len(), 1);
-        pane.toggle_pick(pick(&dict, "KAT", "cat"));
-        assert!(pane.picked.is_empty());
-    }
-
-    #[test]
-    fn one_entry_shown_in_both_lists_counts_as_one_tick() {
-        // Query KAT matches the outline KAT and, case insensitively, the word
-        // "kat", so the same entry appears under Means and under Written as.
-        let dict = temp_dict("bothlists", "{\n\"KAT\": \"kat\"\n}\n");
-        let mut pane = DictionaryPane {
-            query: "KAT".to_owned(),
-            ..DictionaryPane::new()
-        };
-        pane.recompute(&stack(&[&dict]));
-        assert_eq!(pane.forward.len(), 1);
-        assert_eq!(pane.reverse.len(), 1);
-
-        pane.toggle_pick((&pane.forward[0]).into());
-
-        assert_eq!(pane.picked.len(), 1);
-        assert!(is_picked(&pane.picked, &pane.reverse[0]), "the same entry");
-    }
-
-    #[test]
-    fn a_swap_runs_only_at_exactly_two_ticks() {
-        let dict = temp_dict(
-            "exactlytwo",
-            "{\n\"KAT\": \"cart\",\n\"KAERT\": \"cat\",\n\"TKOG\": \"dog\"\n}\n",
-        );
-        let mut pane = DictionaryPane::new();
-
-        assert!(pane.swap_blocked().is_some(), "nothing ticked");
-
-        pane.toggle_pick(pick(&dict, "KAT", "cart"));
-        assert!(pane.swap_blocked().is_some(), "one ticked");
-
-        pane.toggle_pick(pick(&dict, "KAERT", "cat"));
-        assert!(pane.swap_ready(), "two ticked, same dictionary");
-
-        pane.toggle_pick(pick(&dict, "TKOG", "dog"));
-        assert!(
-            pane.swap_blocked().is_some(),
-            "a third tick blocks the swap"
-        );
-    }
-
-    #[test]
-    fn a_swap_across_two_dictionaries_is_refused() {
-        let english = temp_dict("swapen", "{\n\"KAT\": \"cat\"\n}\n");
-        let dutch = temp_dict("swapnl", "{\n\"KAT\": \"kat\"\n}\n");
-        let mut pane = DictionaryPane::new();
-
-        pane.toggle_pick(pick(&english, "KAT", "cat"));
-        pane.toggle_pick(pick(&dutch, "KAT", "kat"));
-
-        assert_eq!(
-            pane.swap_blocked(),
-            Some("Both entries must be in the same dictionary.")
-        );
-    }
-
-    #[test]
-    fn swapping_two_ticked_entries_exchanges_their_words() {
-        let dict = temp_dict("doswap", "{\n\"KAT\": \"cart\",\n\"KAERT\": \"cat\"\n}\n");
-        let mut stack = stack(&[&dict]);
-        let mut pane = DictionaryPane::new();
-        pane.toggle_pick(pick(&dict, "KAT", "cart"));
-        pane.toggle_pick(pick(&dict, "KAERT", "cat"));
-
-        pane.apply_swap(&mut stack);
-
-        let map = read_map(&dict);
-        assert_eq!(map["KAT"], "cat");
-        assert_eq!(map["KAERT"], "cart");
-        // Live in the stack, not only on disk.
-        assert_eq!(
-            stack.lookup(&Stroke::parse_outline("KAT").unwrap()),
-            Some("cat")
-        );
-        assert!(pane.picked.is_empty(), "ticks cleared after the swap");
-        assert!(matches!(pane.swap_message, Some(Ok(_))));
-    }
-
-    #[test]
-    fn ticks_survive_searching_for_the_second_entry() {
-        // The two entries in a swap hold different words, so they cannot both
-        // be on screen at once. The first tick has to outlive the query.
-        let dict = temp_dict("survive", "{\n\"KAT\": \"cart\",\n\"KAERT\": \"cat\"\n}\n");
-        let loaded = stack(&[&dict]);
-        let mut pane = DictionaryPane {
-            query: "cart".to_owned(),
-            ..DictionaryPane::new()
-        };
-        pane.recompute(&loaded);
-        pane.toggle_pick((&pane.reverse[0]).into());
-
-        pane.query = "cat".to_owned();
-        pane.recompute(&loaded);
-
-        assert_eq!(pane.picked.len(), 1, "still ticked after a new search");
-        assert_eq!(pane.picked[0].outline, "KAT");
-        assert_eq!(
-            pane.reverse[0].outline, "KAERT",
-            "the second one is on screen"
-        );
     }
 
     #[test]
@@ -1260,9 +743,43 @@ mod tests {
             ..DictionaryPane::new()
         };
 
-        pane.apply_edit(&mut stack, EditKind::Set);
+        assert!(pane.apply_edit(&mut stack, EditKind::Set));
 
         let strokes = Stroke::parse_outline("KAT").unwrap();
         assert_eq!(stack.lookup(&strokes), Some("kitten"));
+    }
+
+    #[test]
+    fn swapping_a_star_variant_exchanges_the_two_words() {
+        // The whole point: KA*T is harder to write than KAT, so the word she
+        // uses more should own the plain outline.
+        let dict = temp_dict("starswap", "{\n\"KAT\": \"cart\",\n\"KA*T\": \"cat\"\n}\n");
+        let mut stack = stack(&[&dict]);
+        let mut pane = DictionaryPane::new();
+        pane.load_entry(&dict, "KAT", "cart");
+
+        assert!(pane.swap_with(&mut stack, &dict, "KAT", "KA*T"));
+
+        let map = read_map(&dict);
+        assert_eq!(map["KAT"], "cat");
+        assert_eq!(map["KA*T"], "cart");
+        assert_eq!(pane.edit_translation, "cat", "the editor follows the swap");
+        assert!(matches!(pane.edit_message, Some(Ok(_))));
+    }
+
+    #[test]
+    fn a_swap_across_two_dictionaries_is_refused() {
+        let english = temp_dict("swapen", "{\n\"KAT\": \"cat\"\n}\n");
+        let dutch = temp_dict("swapnl", "{\n\"KA*T\": \"kat\"\n}\n");
+        let mut stack = stack(&[&english, &dutch]);
+        let mut pane = DictionaryPane::new();
+        pane.load_entry(&english, "KAT", "cat");
+
+        // KA*T is not in the English file, so the write finds nothing to swap.
+        assert!(!pane.swap_with(&mut stack, &english, "KAT", "KA*T"));
+
+        assert_eq!(read_map(&english)["KAT"], "cat");
+        assert_eq!(read_map(&dutch)["KA*T"], "kat");
+        assert!(matches!(pane.edit_message, Some(Err(_))));
     }
 }

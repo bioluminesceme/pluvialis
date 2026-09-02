@@ -159,6 +159,10 @@ pub struct LiveView {
     output_enabled: bool,
 
     dictionary_pane: crate::dictionaries::DictionaryPane,
+    dictionary_screen: crate::dictionary_screen::DictionaryScreen,
+    /// Every entry, flattened for the table. Rebuilt only when the entries
+    /// themselves change, never on a redraw.
+    entry_index: crate::entry_index::EntryIndex,
     /// Where the current batch of strokes goes, decided once in
     /// `pump_machine` and read by `apply`. See `crate::screens::sink`.
     sink: crate::screens::Sink,
@@ -202,6 +206,8 @@ impl LiveView {
             last_destination: Destination::Document,
             output_enabled: true,
             dictionary_pane: crate::dictionaries::DictionaryPane::new(),
+            dictionary_screen: crate::dictionary_screen::DictionaryScreen::new(),
+            entry_index: crate::entry_index::EntryIndex::new(),
             sink: crate::screens::Sink::Document,
             storage: crate::storage::Storage::new(documents_dir()),
             last_autosave: std::time::Instant::now(),
@@ -457,8 +463,9 @@ impl LiveView {
     pub fn pump_machine(&mut self, ctx: &egui::Context, screen: crate::screens::Screen) {
         let was_focused = self.focused;
         self.focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
-        self.sink =
-            crate::screens::sink(self.focused, screen, self.dictionary_pane.wants_strokes());
+        let field_wants =
+            self.dictionary_pane.wants_strokes() || self.dictionary_screen.wants_strokes();
+        self.sink = crate::screens::sink(self.focused, screen, field_wants);
 
         // Losing focus usually means the user has gone to another program,
         // which is exactly when unsaved work is most likely to be forgotten
@@ -529,6 +536,7 @@ impl LiveView {
         }
 
         self.load_python_dictionaries();
+        self.rebuild_entry_index();
         self.apply_saved_enabled();
     }
 
@@ -667,7 +675,8 @@ impl LiveView {
     pub fn apply(&mut self, stroke: Stroke) {
         let outline = Stroke::render_outline(&[stroke]);
         if self.sink == crate::screens::Sink::Field
-            && self.dictionary_pane.accept_raw_outline(stroke)
+            && (self.dictionary_pane.accept_raw_outline(stroke)
+                || self.dictionary_screen.accept_raw_outline(stroke))
         {
             self.tape.push(TapeEntry {
                 outline,
@@ -884,31 +893,84 @@ impl LiveView {
         egui::CentralPanel::default().show(ui, |ui| self.document(ui));
     }
 
-    /// The Dictionary screen, with the whole width to itself.
+    /// The Dictionary screen: the file list on the left, the table in the
+    /// middle, the editor along the bottom.
     pub fn dictionary(&mut self, ui: &mut egui::Ui) {
         let mut add_clicked = false;
         let mut state_changed = false;
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.add_space(4.0);
-            if ui
-                .button("Add dictionary...")
-                .on_hover_text(
-                    "Copy a Plover .json or .py dictionary into Pluvialis. The                      original is not moved or changed.",
-                )
-                .clicked()
-            {
-                add_clicked = true;
+        let mut entries_changed = false;
+
+        egui::Panel::left("dictionary-list")
+            .resizable(true)
+            .default_size(240.0)
+            .show(ui, |ui| {
+                ui.add_space(4.0);
+                if ui
+                    .button("Add dictionary...")
+                    .on_hover_text(
+                        "Copy a Plover .json or .py dictionary into Pluvialis. The \
+                         original is not moved or changed.",
+                    )
+                    .clicked()
+                {
+                    add_clicked = true;
+                }
+                state_changed = self.dictionary_pane.list(ui, &mut self.dictionaries);
+            });
+
+        egui::Panel::bottom("entry-editor")
+            .resizable(true)
+            .default_size(96.0)
+            .show(ui, |ui| {
+                ui.add_space(4.0);
+                entries_changed = self.dictionary_pane.editor(ui, &mut self.dictionaries);
+                ui.add_space(4.0);
+            });
+
+        let action = egui::CentralPanel::default()
+            .show(ui, |ui| {
+                self.dictionary_screen.ui(ui, &mut self.entry_index)
+            })
+            .inner;
+
+        if let crate::dictionary_screen::Action::Load(id) = action {
+            // Copied out before the editor is touched, so the index is not
+            // still borrowed when the pane takes it.
+            let entry = self.entry_index.entry(id).and_then(|entry| {
+                self.entry_index.path(entry.dictionary).map(|path| {
+                    (
+                        path.to_path_buf(),
+                        entry.outline.clone(),
+                        entry.word.clone(),
+                    )
+                })
+            });
+            if let Some((path, outline, word)) = entry {
+                self.dictionary_pane.load_entry(&path, &outline, &word);
             }
-            state_changed = self.dictionary_pane.ui(ui, &mut self.dictionaries);
-        });
+        }
+
         if add_clicked {
             self.add_dictionaries();
+            entries_changed = true;
         }
         // A toggled checkbox is remembered so it does not have to be set again
         // next launch.
         if state_changed {
             self.save_dictionary_state();
         }
+        if entries_changed {
+            self.rebuild_entry_index();
+        }
+    }
+
+    /// Reread every entry for the table. Only after the entries themselves
+    /// change: enabling, disabling and reordering do not touch them.
+    fn rebuild_entry_index(&mut self) {
+        self.entry_index.rebuild(&self.dictionaries);
+        // The ids the table hands out are positions in the index, so a rebuild
+        // invalidates whatever was highlighted.
+        self.dictionary_screen.select(None);
     }
 
     /// Windows floating above whichever screen is showing.

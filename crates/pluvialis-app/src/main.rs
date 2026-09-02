@@ -10,6 +10,8 @@ use std::process::ExitCode;
 mod cli;
 mod config;
 mod dictionaries;
+mod dictionary_screen;
+mod entry_index;
 mod library;
 mod live;
 mod meter;
