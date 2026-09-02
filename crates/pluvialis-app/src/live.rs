@@ -1182,6 +1182,13 @@ impl LiveView {
             .show(ui, |ui| {
                 egui::TextEdit::multiline(&mut text)
                     .desired_width(f32::INFINITY)
+                    // Tell it the font it is actually drawn in. Without this,
+                    // egui sizes the widget from the default text style, which
+                    // is smaller than the document font, so `rows` measured in
+                    // document lines bought about three quarters of the height
+                    // asked for and left a band of dead grey above the status
+                    // bar.
+                    .font(FontId::proportional(font_size))
                     .desired_rows(rows)
                     .layouter(&mut layouter)
                     .show(ui)
