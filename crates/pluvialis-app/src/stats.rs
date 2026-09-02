@@ -33,7 +33,7 @@
 //! written, because the tail of a word frequency list is one-count entries that
 //! nobody reads and that grow the file without bound.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -46,6 +46,18 @@ const KEPT_PER_LIST: usize = 2000;
 
 /// How often the file is rewritten while the program runs.
 const SAVE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// A gap longer than this is thinking, not writing. The same three seconds the
+/// live meter uses, so the two rates mean the same thing.
+const IDLE_SECONDS: f64 = 3.0;
+
+/// How far back the best-minute figure looks.
+const PEAK_WINDOW: f64 = 60.0;
+
+/// How much of that minute has to be actual writing before it counts as a best.
+/// Without a floor, three quick strokes after a pause read as several hundred
+/// words per minute and the record could never be beaten honestly.
+const PEAK_MIN_WRITING: f64 = 30.0;
 
 /// A counted list, largest first, as the screens want it.
 pub type Ranked = Vec<(String, u64)>;
@@ -65,6 +77,15 @@ pub struct Stats {
     /// anything.
     total_words: u64,
     writing_seconds: f64,
+
+    /// The best sustained rate ever recorded, over a minute of writing.
+    best_wpm: u32,
+    /// When the last counted stroke arrived, so the gap to the next can be
+    /// measured. `Instant`, not egui's frame time, so nothing has to be plumbed
+    /// through the call chain to reach here.
+    last_stroke: Option<Instant>,
+    /// The last minute of `(when, seconds, words)`, for the best-minute figure.
+    recent: VecDeque<(Instant, f64, usize)>,
 
     /// Whether anything has changed since the last save, so an idle program
     /// does no disk writes.
@@ -117,6 +138,7 @@ impl Stats {
             untranslated: counts("untranslated"),
             undone: counts("undone"),
             strokes: number("strokes").unwrap_or(0),
+            best_wpm: number("best_wpm").unwrap_or(0) as u32,
             total_words: number("total_words").unwrap_or(0),
             writing_seconds: value
                 .get("writing_seconds")
@@ -155,6 +177,9 @@ impl Stats {
         self.strokes = 0;
         self.total_words = 0;
         self.writing_seconds = 0.0;
+        self.best_wpm = 0;
+        self.last_stroke = None;
+        self.recent.clear();
         self.dirty = false;
         if let Some(path) = &self.path
             && path.exists()
@@ -175,6 +200,40 @@ impl Stats {
         self.strokes += 1;
         self.dirty = true;
 
+        // The rate is measured here, from the strokes, rather than from the
+        // document's word count. Most of what she writes is typed into another
+        // program and never reaches the document at all, so a document based
+        // rate reported 22 words against 2,468 strokes. The live meter in the
+        // status bar still measures the document, because that is what it is
+        // showing; this is the lifetime figure and has to count everything.
+        let now = Instant::now();
+        // A clock that went backwards, or the first stroke of the run: no gap
+        // to measure, so this stroke starts the clock rather than counting.
+        let gap = self
+            .last_stroke
+            .map(|then| now.duration_since(then).as_secs_f64().min(IDLE_SECONDS))
+            .unwrap_or(0.0);
+        self.last_stroke = Some(now);
+
+        let mut words = 0usize;
+        for translation in &delta.added {
+            if !translation.is_untranslated() {
+                words += crate::meter::count_words(&translation.output());
+            }
+        }
+        if words > 0 {
+            self.total_words += words as u64;
+            self.writing_seconds += gap;
+            self.recent.push_back((now, gap, words));
+        }
+        while let Some(&(when, _, _)) = self.recent.front() {
+            match now.duration_since(when).as_secs_f64() > PEAK_WINDOW {
+                true => self.recent.pop_front(),
+                false => break,
+            };
+        }
+        self.update_best();
+
         for translation in &delta.added {
             match translation.is_untranslated() {
                 true => bump(&mut self.untranslated, &Stroke::render_outline(&translation.strokes)),
@@ -192,15 +251,25 @@ impl Stats {
         }
     }
 
-    /// Add the writing time and words behind one interval of the live meter, so
-    /// the lifetime rate uses the meter's definition rather than a second one.
-    pub fn record_writing(&mut self, seconds: f64, words: usize) {
-        if !self.recording || words == 0 {
+    /// Raise the record if the last minute beat it.
+    ///
+    /// Only counted once at least [`PEAK_MIN_WRITING`] of the window was spent
+    /// writing, so a short burst after a pause cannot set a record that honest
+    /// writing can never beat.
+    fn update_best(&mut self) {
+        let writing: f64 = self.recent.iter().map(|&(_, seconds, _)| seconds).sum();
+        if writing < PEAK_MIN_WRITING {
             return;
         }
-        self.writing_seconds += seconds;
-        self.total_words += words as u64;
-        self.dirty = true;
+        let words: usize = self.recent.iter().map(|&(_, _, words)| words).sum();
+        let rate = (words as f64 * 60.0 / writing).round() as u32;
+        self.best_wpm = self.best_wpm.max(rate);
+    }
+
+    /// The best sustained minute ever recorded, or `None` before one has been
+    /// written.
+    pub fn best_wpm(&self) -> Option<u32> {
+        (self.best_wpm > 0).then_some(self.best_wpm)
     }
 
     pub fn strokes(&self) -> u64 {
@@ -269,6 +338,7 @@ impl Stats {
 
         let document = serde_json::json!({
             "strokes": self.strokes,
+            "best_wpm": self.best_wpm,
             "total_words": self.total_words,
             "writing_seconds": self.writing_seconds,
             "words": trimmed(&self.words),
@@ -411,7 +481,6 @@ mod tests {
             },
             false,
         );
-        stats.record_writing(30.0, 60);
         assert!(stats.top_words(10).is_empty());
         assert_eq!(stats.strokes(), 0);
         assert_eq!(stats.total_words(), 0);
@@ -421,15 +490,44 @@ mod tests {
     fn the_rate_uses_writing_time_rather_than_wall_clock() {
         let mut stats = recording();
         // Two minutes of writing, 240 words.
-        stats.record_writing(120.0, 240);
+        stats.writing_seconds = 120.0;
+        stats.total_words = 240;
         assert_eq!(stats.words_per_minute(), Some(120));
     }
 
     #[test]
     fn there_is_no_rate_until_there_is_enough_to_divide_by() {
         let mut stats = recording();
-        stats.record_writing(10.0, 30);
+        stats.writing_seconds = 10.0;
+        stats.total_words = 30;
         assert_eq!(stats.words_per_minute(), None);
+    }
+
+    /// A burst must not set a record that honest writing can never beat.
+    #[test]
+    fn a_short_burst_does_not_set_a_best_minute() {
+        let mut stats = recording();
+        let now = Instant::now();
+        // Ten words in two seconds is 300 wpm, and proves nothing.
+        stats.recent.push_back((now, 2.0, 10));
+        stats.update_best();
+        assert_eq!(stats.best_wpm(), None);
+    }
+
+    #[test]
+    fn a_sustained_minute_sets_the_best() {
+        let mut stats = recording();
+        let now = Instant::now();
+        // Forty seconds of writing, 80 words: 120 wpm.
+        stats.recent.push_back((now, 40.0, 80));
+        stats.update_best();
+        assert_eq!(stats.best_wpm(), Some(120));
+
+        // A slower minute afterwards does not lower the record.
+        stats.recent.clear();
+        stats.recent.push_back((now, 40.0, 40));
+        stats.update_best();
+        assert_eq!(stats.best_wpm(), Some(120));
     }
 
     #[test]
@@ -442,10 +540,13 @@ mod tests {
             },
             false,
         );
-        stats.record_writing(120.0, 240);
+        stats.writing_seconds = 120.0;
+        stats.total_words = 240;
+        stats.best_wpm = 150;
         stats.clear();
         assert!(stats.is_empty());
         assert_eq!(stats.words_per_minute(), None);
+        assert_eq!(stats.best_wpm(), None);
     }
 
     #[test]

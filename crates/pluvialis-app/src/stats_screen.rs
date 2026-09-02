@@ -65,6 +65,11 @@ fn totals(ui: &mut egui::Ui, stats: &Stats) {
             None => "-".to_owned(),
         };
         figure(ui, &rate, "words per minute");
+        let best = match stats.best_wpm() {
+            Some(wpm) => format!("{wpm}"),
+            None => "-".to_owned(),
+        };
+        figure(ui, &best, "best minute");
         figure(ui, &thousands(stats.total_words()), "words written");
         figure(ui, &thousands(stats.strokes()), "strokes");
         figure(ui, &duration(stats.writing_seconds()), "spent writing");
@@ -72,8 +77,7 @@ fn totals(ui: &mut egui::Ui, stats: &Stats) {
     ui.add_space(4.0);
     ui.label(
         egui::RichText::new(
-            "Words per minute counts real words and excludes the time spent \
-             thinking, the same way the live figure in the status bar does.",
+            "Both rates count every word you write, including what goes into other programs, and exclude the time spent thinking. Best minute is the fastest full minute ever recorded. It only counts once at least half that minute was spent writing, so a short burst cannot set a record you could never beat.",
         )
         .small()
         .weak(),

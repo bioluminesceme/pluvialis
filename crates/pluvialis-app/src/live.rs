@@ -161,6 +161,9 @@ pub struct LiveView {
     /// The stats being recorded this run. Recording is checked before anything
     /// is counted, not before it is shown.
     stats: crate::stats::Stats,
+    /// Whether the Settings screen is waiting for the second click that
+    /// actually deletes the counts.
+    confirm_stats_reset: bool,
 
     dictionary_pane: crate::dictionaries::DictionaryPane,
     dictionary_screen: crate::dictionary_screen::DictionaryScreen,
@@ -219,6 +222,7 @@ impl LiveView {
             output_enabled: config.settings.output_at_launch,
             config,
             stats,
+            confirm_stats_reset: false,
             dictionary_pane: crate::dictionaries::DictionaryPane::new(),
             dictionary_screen: crate::dictionary_screen::DictionaryScreen::new(),
             entry_index: crate::entry_index::EntryIndex::new(),
@@ -1010,6 +1014,7 @@ impl LiveView {
             &mut self.config.settings,
             &documents,
             &mut self.stats,
+            &mut self.confirm_stats_reset,
         );
         if changed {
             // The interval is read from `storage` every frame, so it has to be
@@ -1336,9 +1341,7 @@ impl LiveView {
         let words = self.words.1;
 
         let now = ui.input(|i| i.time);
-        if let Some((seconds, written)) = self.meter.observe(now, words) {
-            self.stats.record_writing(seconds, written);
-        }
+        self.meter.observe(now, words);
         let idle = self.meter.is_idle(now);
 
         ui.add_space(2.0);

@@ -26,6 +26,7 @@ pub fn ui(
     settings: &mut Settings,
     documents_dir: &Path,
     stats: &mut Stats,
+    confirm_reset: &mut bool,
 ) -> bool {
     let mut changed = false;
 
@@ -41,7 +42,7 @@ pub fn ui(
             ui.add_space(14.0);
             changed |= output(ui, settings);
             ui.add_space(14.0);
-            changed |= statistics(ui, settings, stats);
+            changed |= statistics(ui, settings, stats, confirm_reset);
             ui.add_space(14.0);
             where_things_live(ui, documents_dir);
         });
@@ -167,7 +168,12 @@ fn output(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
     changed
 }
 
-fn statistics(ui: &mut egui::Ui, settings: &mut Settings, stats: &mut Stats) -> bool {
+fn statistics(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    stats: &mut Stats,
+    confirm: &mut bool,
+) -> bool {
     heading(ui, "Statistics");
 
     let mut recording = settings.record_stats;
@@ -188,12 +194,36 @@ fn statistics(ui: &mut egui::Ui, settings: &mut Settings, stats: &mut Stats) -> 
     );
 
     ui.add_space(6.0);
-    if ui
-        .add_enabled(!stats.is_empty(), egui::Button::new("Delete what has been counted"))
-        .on_hover_text("Forget every count and delete pluvialis-stats.json")
-        .clicked()
-    {
-        stats.clear();
+    // Two steps, because there is no undo: the counts go, the file goes, and a
+    // best minute took real writing to set.
+    match *confirm {
+        false => {
+            if ui
+                .add_enabled(
+                    !stats.is_empty(),
+                    egui::Button::new("Delete what has been counted..."),
+                )
+                .on_hover_text("Forget every count and delete pluvialis-stats.json")
+                .clicked()
+            {
+                *confirm = true;
+            }
+        }
+        true => {
+            ui.colored_label(
+                ui.visuals().error_fg_color,
+                "Delete every count, including your best minute? This cannot be undone.",
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Yes, delete it all").clicked() {
+                    stats.clear();
+                    *confirm = false;
+                }
+                if ui.button("Cancel").clicked() {
+                    *confirm = false;
+                }
+            });
+        }
     }
 
     changed
