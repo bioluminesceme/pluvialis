@@ -51,17 +51,29 @@ impl Meter {
     /// Record the document's word count at a moment in time.
     ///
     /// `now` is egui's frame time: monotonic seconds since the program started.
-    pub fn observe(&mut self, now: f64, words: usize) {
-        match self.samples.back().map(|&(_, count)| count) {
+    ///
+    /// Returns the `(seconds, words)` this observation contributed, when it
+    /// contributed any, so a caller keeping a lifetime total can add up the
+    /// same intervals [`Meter::words_per_minute`] divides. The alternative,
+    /// counting words and wall clock separately somewhere else, produces a
+    /// second definition of wpm that disagrees with the status bar. It also has
+    /// to be returned rather than read back later, because the meter is reset
+    /// whenever a document is opened.
+    pub fn observe(&mut self, now: f64, words: usize) -> Option<(f64, usize)> {
+        match self.samples.back().copied() {
             // A new word, or several in one stroke: record it against the last
             // count, and note that writing happened.
-            Some(previous) if words > previous => {
+            Some((when, previous)) if words > previous => {
                 self.last_wrote = Some(now);
                 self.samples.push_back((now, words));
+                // The same interval and the same cap the rate uses.
+                let contributed = ((now - when).min(IDLE_SECONDS), words - previous);
+                self.trim(now);
+                return Some(contributed);
             }
             // A deletion: record the new count so a later word measures its gap
             // from here, but deleting is not writing.
-            Some(previous) if words < previous => {
+            Some((_, previous)) if words < previous => {
                 self.samples.push_back((now, words));
             }
             // Unchanged. Record nothing. This is the whole correctness point:
@@ -75,7 +87,12 @@ impl Meter {
             // against.
             None => self.samples.push_back((now, words)),
         }
+        self.trim(now);
+        None
+    }
 
+    /// Drop samples that have fallen out of the window.
+    fn trim(&mut self, now: f64) {
         while let Some(&(when, _)) = self.samples.front() {
             if now - when > WINDOW_SECONDS {
                 self.samples.pop_front();
@@ -148,9 +165,9 @@ mod tests {
     fn there_is_no_rate_until_there_is_enough_to_divide_by() {
         let mut meter = Meter::new();
         assert_eq!(meter.words_per_minute(), None);
-        meter.observe(0.0, 0);
+        let _ = meter.observe(0.0, 0);
         assert_eq!(meter.words_per_minute(), None);
-        meter.observe(0.5, 5);
+        let _ = meter.observe(0.5, 5);
         assert_eq!(
             meter.words_per_minute(),
             None,
@@ -203,7 +220,7 @@ mod tests {
     #[test]
     fn writing_again_after_a_pause_stops_reading_as_idle() {
         let mut meter = Meter::new();
-        meter.observe(0.0, 0);
+        let _ = meter.observe(0.0, 0);
         meter.observe(10.0, 1);
         assert!(!meter.is_idle(10.0));
         assert!(meter.is_idle(20.0));

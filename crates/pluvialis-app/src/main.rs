@@ -18,6 +18,7 @@ mod meter;
 mod paths;
 mod screens;
 mod settings_screen;
+mod stats;
 mod stats_screen;
 mod storage;
 
@@ -180,8 +181,16 @@ impl eframe::App for PluvialisApp {
         match self.screen {
             screens::Screen::Home => self.live.home(ui),
             screens::Screen::Dictionary => self.live.dictionary(ui),
-            screens::Screen::Settings => settings_screen::ui(ui),
-            screens::Screen::Stats => stats_screen::ui(ui),
+            screens::Screen::Settings => self.live.settings(ui),
+            // An outline with no entry, picked from the untranslated list. The
+            // screen change belongs here rather than in the screen, since the
+            // shell is what owns which screen is showing.
+            screens::Screen::Stats => {
+                if let Some(outline) = self.live.stats(ui) {
+                    self.live.start_new_entry(&outline);
+                    self.screen = screens::Screen::Dictionary;
+                }
+            }
         }
         self.live.overlays(ui, self.screen);
     }

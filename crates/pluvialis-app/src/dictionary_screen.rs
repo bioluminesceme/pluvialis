@@ -17,6 +17,7 @@ use eframe::egui;
 use pluvialis_core::Stroke;
 
 use crate::entry_index::{EntryIndex, Query, Sort};
+use crate::screens::thousands;
 
 /// What the screen wants done. The screen can see the entries but not write to
 /// them, so it says what it wants and the caller, which owns the dictionaries,
@@ -98,8 +99,12 @@ impl DictionaryScreen {
         let matches = index.total_matches();
         let total = index.total_entries();
         let label = match self.search.trim().is_empty() && self.filter.is_none() {
-            true => format!("{} entries", thousands(total)),
-            false => format!("{} of {} entries", thousands(matches), thousands(total)),
+            true => format!("{} entries", thousands(total as u64)),
+            false => format!(
+                "{} of {} entries",
+                thousands(matches as u64),
+                thousands(total as u64)
+            ),
         };
         ui.label(egui::RichText::new(label).weak());
 
@@ -468,18 +473,6 @@ fn cell(ui: &mut egui::Ui, width: f32, text: egui::RichText) {
 }
 
 /// `101419` reads as noise at a glance; `101,419` does not.
-fn thousands(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, c) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,14 +510,6 @@ mod tests {
             .copied()
             .find(|id| index.entry(*id).map(|e| e.outline.as_str()) == Some(outline))
             .expect("outline is in the index")
-    }
-
-    #[test]
-    fn counts_are_grouped_for_reading() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(999), "999");
-        assert_eq!(thousands(1_000), "1,000");
-        assert_eq!(thousands(101_419), "101,419");
     }
 
     #[test]

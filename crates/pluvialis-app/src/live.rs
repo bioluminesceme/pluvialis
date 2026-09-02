@@ -67,7 +67,7 @@ fn raw_color(visuals: &egui::Visuals) -> Color32 {
 /// A connected writer. Green reads the same on both themes at this weight.
 const CONNECTED_COLOR: Color32 = Color32::from_rgb(0x2E, 0xA0, 0x43);
 
-const DOCUMENT_FONT_SIZE: f32 = 18.0;
+
 
 /// One line of the tape: what was written, and what it produced.
 struct TapeEntry {
@@ -75,24 +75,21 @@ struct TapeEntry {
     result: String,
 }
 
-/// How many tape lines to keep.
+/// Drop the oldest tape lines once there are more than `limit`.
 ///
 /// The strip is an `egui::ScrollArea`, and `show` lays out every child each
 /// frame whether or not it is on screen, so an uncapped tape costs steadily
 /// more per frame the longer the session runs. The strip sticks to the bottom,
 /// so the lines dropped are always the ones that have scrolled out of reach.
-const TAPE_LIMIT: usize = 500;
-
-/// Drop the oldest tape lines once there are more than [`TAPE_LIMIT`].
 ///
 /// Dropping from the front is safe here in a way it is not for the
 /// translator's history: nothing reads the tape by index or diffs it against
 /// anything, it is only iterated for display and cleared wholesale. Compare
 /// `LiveView::resync_after_trim`, where trimming the front of the *history*
 /// shifts what the formatter produces and has to be absorbed deliberately.
-fn trim_tape(tape: &mut Vec<TapeEntry>) {
-    if tape.len() > TAPE_LIMIT {
-        let excess = tape.len() - TAPE_LIMIT;
+fn trim_tape(tape: &mut Vec<TapeEntry>, limit: usize) {
+    if tape.len() > limit {
+        let excess = tape.len() - limit;
         tape.drain(..excess);
     }
 }
@@ -139,7 +136,7 @@ pub struct LiveView {
     /// colour sections are computed only when the document actually changes.
     /// Without this the cost grows with document length at 60 fps and presents
     /// as vague sluggishness rather than as anything pointing here.
-    layout: Option<(Color32, Arc<LayoutJob>)>,
+    layout: Option<(Color32, f32, Arc<LayoutJob>)>,
 
     tape: Vec<TapeEntry>,
     /// How many of `formatted.events` have been logged, so a reformat does not
@@ -157,6 +154,13 @@ pub struct LiveView {
     /// The tray toggle. With this off, steno still translates and still shows
     /// on the tape, but nothing is typed anywhere.
     output_enabled: bool,
+
+    /// Enabled state, priority order and every setting, as loaded at start
+    /// and written back whenever one of them changes.
+    config: crate::config::Config,
+    /// The stats being recorded this run. Recording is checked before anything
+    /// is counted, not before it is shown.
+    stats: crate::stats::Stats,
 
     dictionary_pane: crate::dictionaries::DictionaryPane,
     dictionary_screen: crate::dictionary_screen::DictionaryScreen,
@@ -189,6 +193,14 @@ pub struct LiveView {
 
 impl LiveView {
     pub fn new() -> Self {
+        let config = crate::config::load();
+        let stats = crate::stats::Stats::load(config.settings.record_stats);
+        let documents = config
+            .settings
+            .documents_dir
+            .clone()
+            .unwrap_or_else(documents_dir);
+
         let mut view = LiveView {
             dictionaries: DictionaryStack::new(),
             translator: Translator::new(),
@@ -204,12 +216,14 @@ impl LiveView {
             load_error: None,
             focused: true,
             last_destination: Destination::Document,
-            output_enabled: true,
+            output_enabled: config.settings.output_at_launch,
+            config,
+            stats,
             dictionary_pane: crate::dictionaries::DictionaryPane::new(),
             dictionary_screen: crate::dictionary_screen::DictionaryScreen::new(),
             entry_index: crate::entry_index::EntryIndex::new(),
             sink: crate::screens::Sink::Document,
-            storage: crate::storage::Storage::new(documents_dir()),
+            storage: crate::storage::Storage::new(documents),
             last_autosave: std::time::Instant::now(),
             save_error: None,
             recovery: Vec::new(),
@@ -221,6 +235,7 @@ impl LiveView {
             machine_events: None,
             machine_status: MachineStatus::Searching,
         };
+        view.storage.autosave_interval = view.config.settings.autosave_interval();
         view.load_dictionaries();
         view.begin_session();
         view
@@ -262,6 +277,12 @@ impl LiveView {
         }
         self.last_autosave = std::time::Instant::now();
         self.save_now();
+    }
+
+    /// Write the counts if any have changed and the interval has elapsed.
+    /// Never per stroke: this sits in the output path.
+    fn save_stats(&mut self) {
+        self.stats.save_if_due();
     }
 
     fn save_now(&mut self) {
@@ -423,6 +444,7 @@ impl LiveView {
     /// Save and clear the running marker, so the next start knows this was a
     /// clean exit.
     pub fn shutdown(&mut self) {
+        self.stats.save();
         self.save_now();
         self.storage.end_session();
     }
@@ -474,6 +496,7 @@ impl LiveView {
             self.save_now();
         }
         self.autosave();
+        self.save_stats();
 
         let Some(events) = &self.machine_events else {
             return;
@@ -597,14 +620,12 @@ impl LiveView {
         self.apply_saved_enabled();
     }
 
-    /// Set each dictionary's enabled state from what was saved last run, keyed
-    /// by file name. A dictionary the file does not mention keeps its default,
-    /// which is on for JSON and off for Python.
+    /// Set each dictionary's enabled state and priority order from what was
+    /// saved last run, keyed by file name. A dictionary the file does not
+    /// mention keeps its default, which is on for JSON and off for Python, and
+    /// sorts after the ones that are listed.
     fn apply_saved_enabled(&mut self) {
-        let saved = crate::config::load_enabled();
-        if saved.is_empty() {
-            return;
-        }
+        let saved = &self.config.enabled;
         for entry in self.dictionaries.dictionaries_mut() {
             if let Some(name) = entry.path.file_name()
                 && let Some(&enabled) = saved.get(name.to_string_lossy().as_ref())
@@ -617,20 +638,47 @@ impl LiveView {
                 entry.set_enabled(enabled);
             }
         }
+        self.apply_saved_order();
     }
 
-    /// Record which dictionaries are enabled, so the choice survives a restart.
-    fn save_dictionary_state(&self) {
+    /// Put the dictionaries back in the priority order she left them in.
+    ///
+    /// Order is what decides which dictionary wins when two define the same
+    /// outline, so losing it on restart silently changes what her strokes
+    /// write. It was lost until 2026-09-02: only the enabled flags were saved.
+    ///
+    /// A name that is not in the saved list sorts last, keeping the order it
+    /// was found in, which is what a dictionary added since the last save
+    /// should do.
+    fn apply_saved_order(&mut self) {
+        if self.config.order.is_empty() {
+            return;
+        }
+        // Stable, so unlisted dictionaries keep the order they arrived in
+        // rather than being shuffled among themselves.
+        self.dictionaries
+            .dictionaries_mut()
+            .sort_by_key(|d| priority_rank(&self.config.order, &d.path));
+    }
+
+    /// Record which dictionaries are enabled and in what order, so both survive
+    /// a restart.
+    fn save_dictionary_state(&mut self) {
         let mut state = std::collections::HashMap::new();
+        let mut order = Vec::new();
         for entry in self.dictionaries.dictionaries() {
             if let Some(name) = entry.path.file_name() {
-                state.insert(name.to_string_lossy().into_owned(), entry.enabled);
+                let name = name.to_string_lossy().into_owned();
+                state.insert(name.clone(), entry.enabled);
+                order.push(name);
             }
         }
         for entry in self.dictionaries.programmatic() {
             state.insert(entry.name(), entry.is_enabled());
         }
-        crate::config::save_enabled(&state);
+        self.config.enabled = state;
+        self.config.order = order;
+        crate::config::save(&self.config);
     }
 
     /// Load one just-imported dictionary into the running stack.
@@ -682,16 +730,17 @@ impl LiveView {
                 outline,
                 result: "dictionary field".to_owned(),
             });
-            trim_tape(&mut self.tape);
+            trim_tape(&mut self.tape, self.config.settings.tape_limit);
             return;
         }
 
         let delta = self.translator.translate(&self.dictionaries, stroke);
+        self.stats.record(&delta, crate::stats::is_undo(stroke));
         self.tape.push(TapeEntry {
             outline,
             result: describe(stroke, &delta),
         });
-        trim_tape(&mut self.tape);
+        trim_tape(&mut self.tape, self.config.settings.tape_limit);
         self.reformat();
     }
 
@@ -854,9 +903,10 @@ impl LiveView {
 
     /// The memoised layout job, rebuilt only when the document or theme
     /// changed.
-    fn layout_job(&mut self, raw: Color32) -> Arc<LayoutJob> {
-        if let Some((color, job)) = &self.layout
+    fn layout_job(&mut self, raw: Color32, font_size: f32) -> Arc<LayoutJob> {
+        if let Some((color, size, job)) = &self.layout
             && *color == raw
+            && *size == font_size
         {
             return job.clone();
         }
@@ -864,8 +914,9 @@ impl LiveView {
             self.document.text(),
             self.document.raw_ranges(),
             raw,
+            font_size,
         ));
-        self.layout = Some((raw, job.clone()));
+        self.layout = Some((raw, font_size, job.clone()));
         job
     }
 
@@ -949,6 +1000,36 @@ impl LiveView {
         }
     }
 
+    /// The Settings screen. Anything changed here is written to the config
+    /// file at once, and the two settings that cannot apply until the next
+    /// start say so on the screen.
+    pub fn settings(&mut self, ui: &mut egui::Ui) {
+        let documents = self.storage.documents_dir().to_path_buf();
+        let changed = crate::settings_screen::ui(
+            ui,
+            &mut self.config.settings,
+            &documents,
+            &mut self.stats,
+        );
+        if changed {
+            // The interval is read from `storage` every frame, so it has to be
+            // pushed across rather than waiting for a restart.
+            self.storage.autosave_interval = self.config.settings.autosave_interval();
+            crate::config::save(&self.config);
+        }
+    }
+
+    /// The Stats screen. Returns an outline she asked to write an entry for, so
+    /// the shell can switch to the Dictionary screen with it loaded.
+    pub fn stats(&mut self, ui: &mut egui::Ui) -> Option<String> {
+        crate::stats_screen::ui(ui, &self.stats)
+    }
+
+    /// Open the dictionary editor on a new entry for this outline.
+    pub fn start_new_entry(&mut self, outline: &str) {
+        self.dictionary_pane.start_new_entry(outline);
+    }
+
     /// Carry out what the table asked for. Everything is copied out of the
     /// index first, so it is not still borrowed when the dictionaries are
     /// written to.
@@ -1020,7 +1101,7 @@ impl LiveView {
     }
 
     fn document(&mut self, ui: &mut egui::Ui) {
-        let job = self.layout_job(raw_color(ui.visuals()));
+        let job = self.layout_job(raw_color(ui.visuals()), self.config.settings.font_size);
         let mut layouter = move |ui: &egui::Ui, _buf: &dyn egui::TextBuffer, wrap_width: f32| {
             let mut job = (*job).clone();
             job.wrap.max_width = wrap_width;
@@ -1046,7 +1127,8 @@ impl LiveView {
         // the start; the scroll area still takes over once the text is longer.
         // The document's own font, not a text style: the layouter paints at
         // DOCUMENT_FONT_SIZE, so any other measure gets the row count wrong.
-        let row_height = ui.fonts_mut(|f| f.row_height(&FontId::proportional(DOCUMENT_FONT_SIZE)));
+        let font_size = self.config.settings.font_size;
+        let row_height = ui.fonts_mut(|f| f.row_height(&FontId::proportional(font_size)));
         let rows = (ui.available_height() / row_height).floor().max(1.0) as usize;
 
         let output = egui::ScrollArea::vertical()
@@ -1254,7 +1336,9 @@ impl LiveView {
         let words = self.words.1;
 
         let now = ui.input(|i| i.time);
-        self.meter.observe(now, words);
+        if let Some((seconds, written)) = self.meter.observe(now, words) {
+            self.stats.record_writing(seconds, written);
+        }
         let idle = self.meter.is_idle(now);
 
         ui.add_space(2.0);
@@ -1352,6 +1436,18 @@ impl LiveView {
     }
 }
 
+/// Where a dictionary sorts, given the saved priority order.
+///
+/// A file the order does not mention sorts last rather than first. A dictionary
+/// added since the last save is the one the user has not ranked yet, and putting
+/// it at the top would silently outrank everything she has.
+fn priority_rank(order: &[String], path: &std::path::Path) -> usize {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| order.iter().position(|saved| saved == name))
+        .unwrap_or(usize::MAX)
+}
+
 /// Where documents and their history live.
 ///
 /// Beside the executable rather than in AppData, so the user can find, back up
@@ -1399,8 +1495,13 @@ fn describe(stroke: Stroke, delta: &Delta) -> String {
 /// so a range recorded earlier can end up stale. A stale range that splits a
 /// UTF-8 character would panic inside the layouter, which is a poor way to find
 /// out about it.
-fn highlight(text: &str, raw_ranges: &[(usize, usize)], raw_color: Color32) -> LayoutJob {
-    let font = FontId::proportional(DOCUMENT_FONT_SIZE);
+fn highlight(
+    text: &str,
+    raw_ranges: &[(usize, usize)],
+    raw_color: Color32,
+    font_size: f32,
+) -> LayoutJob {
+    let font = FontId::proportional(font_size);
 
     let mut job = LayoutJob {
         text: text.to_owned(),
@@ -1462,31 +1563,59 @@ mod tests {
             .collect()
     }
 
+    /// Priority decides which dictionary wins when two define the same
+    /// outline, so the order has to come back exactly as it was left.
+    #[test]
+    fn the_saved_order_ranks_the_dictionaries_it_names() {
+        let order = vec!["second.json".to_owned(), "first.json".to_owned()];
+        assert_eq!(
+            priority_rank(&order, std::path::Path::new("C:/x/second.json")),
+            0
+        );
+        assert_eq!(
+            priority_rank(&order, std::path::Path::new("C:/x/first.json")),
+            1
+        );
+    }
+
+    /// A dictionary imported since the last save. It has never been ranked, so
+    /// it must not outrank the ones that have been.
+    #[test]
+    fn a_dictionary_the_order_does_not_name_sorts_last() {
+        let order = vec!["known.json".to_owned()];
+        assert_eq!(
+            priority_rank(&order, std::path::Path::new("C:/x/brand-new.json")),
+            usize::MAX
+        );
+    }
+
     #[test]
     fn the_tape_keeps_the_newest_lines_and_drops_the_oldest() {
-        let mut tape = tape_of(TAPE_LIMIT + 50);
-        trim_tape(&mut tape);
+        let limit = crate::config::DEFAULT_TAPE_LIMIT;
+        let mut tape = tape_of(limit + 50);
+        trim_tape(&mut tape, limit);
 
-        assert_eq!(tape.len(), TAPE_LIMIT);
+        assert_eq!(tape.len(), limit);
         // The strip sticks to the bottom, so the newest line is the one that
         // must survive. Trimming the wrong end would leave it showing the
         // opening of the session and never updating again.
-        assert_eq!(tape.last().unwrap().result, (TAPE_LIMIT + 49).to_string());
+        assert_eq!(tape.last().unwrap().result, (limit + 49).to_string());
         assert_eq!(tape.first().unwrap().result, "50");
     }
 
     #[test]
     fn a_tape_within_the_limit_is_left_alone() {
-        let mut tape = tape_of(TAPE_LIMIT);
-        trim_tape(&mut tape);
-        assert_eq!(tape.len(), TAPE_LIMIT);
+        let limit = crate::config::DEFAULT_TAPE_LIMIT;
+        let mut tape = tape_of(limit);
+        trim_tape(&mut tape, limit);
+        assert_eq!(tape.len(), limit);
         assert_eq!(tape.first().unwrap().result, "0");
     }
 
     #[test]
     fn trimming_an_empty_tape_does_nothing() {
         let mut tape = tape_of(0);
-        trim_tape(&mut tape);
+        trim_tape(&mut tape, crate::config::DEFAULT_TAPE_LIMIT);
         assert!(tape.is_empty());
     }
 
@@ -1509,7 +1638,7 @@ mod tests {
     #[test]
     fn raw_ranges_are_painted_red_and_the_rest_is_not() {
         let f = formatted("cat KAT dog", vec![(4, 7)]);
-        let job = highlight(&f.0, &f.1, RED);
+        let job = highlight(&f.0, &f.1, RED, crate::config::DEFAULT_FONT_SIZE);
         assert_covers(&job, &f.0);
         assert_eq!(job.sections.len(), 3);
         assert_eq!(job.sections[0].format.color, Color32::PLACEHOLDER);
@@ -1522,7 +1651,7 @@ mod tests {
     #[test]
     fn text_with_no_raw_steno_is_one_section() {
         let f = formatted("hello world", Vec::new());
-        let job = highlight(&f.0, &f.1, RED);
+        let job = highlight(&f.0, &f.1, RED, crate::config::DEFAULT_FONT_SIZE);
         assert_covers(&job, &f.0);
         assert_eq!(job.sections.len(), 1);
         assert_eq!(job.sections[0].format.color, Color32::PLACEHOLDER);
@@ -1531,14 +1660,14 @@ mod tests {
     #[test]
     fn empty_document_produces_no_sections() {
         let empty = formatted("", Vec::new());
-        let job = highlight(&empty.0, &empty.1, RED);
+        let job = highlight(&empty.0, &empty.1, RED, crate::config::DEFAULT_FONT_SIZE);
         assert!(job.sections.is_empty());
     }
 
     #[test]
     fn a_document_that_is_entirely_raw_steno_is_one_red_section() {
         let f = formatted("KAT", vec![(0, 3)]);
-        let job = highlight(&f.0, &f.1, RED);
+        let job = highlight(&f.0, &f.1, RED, crate::config::DEFAULT_FONT_SIZE);
         assert_covers(&job, &f.0);
         assert_eq!(job.sections.len(), 1);
         assert_eq!(job.sections[0].format.color, RED);
@@ -1547,7 +1676,7 @@ mod tests {
     #[test]
     fn adjacent_raw_ranges_do_not_produce_an_empty_section_between_them() {
         let f = formatted("KATTKOG", vec![(0, 3), (3, 7)]);
-        let job = highlight(&f.0, &f.1, RED);
+        let job = highlight(&f.0, &f.1, RED, crate::config::DEFAULT_FONT_SIZE);
         assert_covers(&job, &f.0);
         assert_eq!(job.sections.len(), 2);
         assert!(job.sections.iter().all(|s| s.format.color == RED));
@@ -1558,7 +1687,7 @@ mod tests {
         // Past the end, backwards, and overlapping the previous range: all
         // reachable if formatting rewrote earlier text.
         let f = formatted("short", vec![(0, 2), (1, 3), (4, 99), (3, 3)]);
-        let job = highlight(&f.0, &f.1, RED);
+        let job = highlight(&f.0, &f.1, RED, crate::config::DEFAULT_FONT_SIZE);
         assert_covers(&job, &f.0);
     }
 
@@ -1566,7 +1695,7 @@ mod tests {
     fn a_range_splitting_a_character_is_ignored() {
         // The pound sign is two bytes, so 1 is not a character boundary.
         let f = formatted("\u{00A3}5", vec![(1, 2)]);
-        let job = highlight(&f.0, &f.1, RED);
+        let job = highlight(&f.0, &f.1, RED, crate::config::DEFAULT_FONT_SIZE);
         assert_covers(&job, &f.0);
         assert!(job.sections.iter().all(|s| s.format.color != RED));
     }

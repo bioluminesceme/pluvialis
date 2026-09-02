@@ -102,6 +102,16 @@ impl DictionaryPane {
         self.edit_message = None;
     }
 
+    /// Start a new entry for an outline chosen somewhere else, for instance
+    /// from the untranslated list on the Stats screen. Not `load_entry`: there
+    /// is no entry to load, which is the whole reason she is here.
+    pub fn start_new_entry(&mut self, outline: &str) {
+        self.loaded = None;
+        self.edit_outline = outline.to_owned();
+        self.edit_translation.clear();
+        self.edit_message = None;
+    }
+
     /// The dictionary list, with priority order and enable checkboxes.
     ///
     /// Returns whether the enabled state or order changed this frame, so the
