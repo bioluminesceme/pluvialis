@@ -188,6 +188,40 @@ impl Stroke {
         self.0 == STAR
     }
 
+    pub fn has_star(self) -> bool {
+        self.0 & STAR != 0
+    }
+
+    /// The same chord with the star added, or removed if it was there.
+    ///
+    /// `None` only for the undo chord, the bare star: taking its star away
+    /// leaves no keys at all, and an empty chord is not a stroke. Every other
+    /// case is a real chord, including one that gains the star.
+    pub fn toggled_star(self) -> Option<Stroke> {
+        let bits = self.0 ^ STAR;
+        (bits != 0).then_some(Stroke(bits))
+    }
+
+    /// Every outline that differs from this one by the star on exactly one
+    /// stroke.
+    ///
+    /// An n-stroke outline yields at most n variants. This is what makes
+    /// "KAT and KA*T are the same chord with one key of difference"
+    /// computable: the two are near-identical to write, so which of them
+    /// carries the more frequent word is worth deciding deliberately.
+    pub fn star_variants(outline: &[Stroke]) -> Vec<Vec<Stroke>> {
+        let mut variants = Vec::new();
+        for (index, stroke) in outline.iter().enumerate() {
+            let Some(toggled) = stroke.toggled_star() else {
+                continue;
+            };
+            let mut variant = outline.to_vec();
+            variant[index] = toggled;
+            variants.push(variant);
+        }
+        variants
+    }
+
     pub fn has_number_key(self) -> bool {
         self.0 & NUMBER != 0
     }
@@ -261,6 +295,54 @@ impl fmt::Display for Stroke {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_star_toggles_on_and_off() {
+        let kat = Stroke::parse("KAT").unwrap();
+        assert!(!kat.has_star());
+
+        let starred = kat.toggled_star().unwrap();
+        assert!(starred.has_star());
+        assert_eq!(starred.to_string(), "KA*T");
+        assert_eq!(starred.toggled_star(), Some(kat));
+    }
+
+    #[test]
+    fn the_undo_chord_has_no_star_variant() {
+        // Taking the star off the bare star leaves no keys, and an empty chord
+        // is not a stroke. Every other chord toggles.
+        let undo = Stroke::parse("*").unwrap();
+        assert!(undo.is_undo());
+        assert_eq!(undo.toggled_star(), None);
+
+        let a = Stroke::parse("A").unwrap();
+        assert_eq!(a.toggled_star().unwrap().to_string(), "A*");
+    }
+
+    #[test]
+    fn star_variants_differ_by_one_stroke_each() {
+        let outline = Stroke::parse_outline("WEL/KOPL").unwrap();
+        let variants = Stroke::star_variants(&outline);
+
+        let rendered: Vec<String> = variants.iter().map(|v| Stroke::render_outline(v)).collect();
+        assert_eq!(rendered, ["W*EL/KOPL", "WEL/KO*PL"]);
+    }
+
+    #[test]
+    fn a_starred_outline_yields_the_unstarred_one() {
+        let outline = Stroke::parse_outline("KA*T").unwrap();
+        let variants = Stroke::star_variants(&outline);
+        assert_eq!(Stroke::render_outline(&variants[0]), "KAT");
+    }
+
+    #[test]
+    fn every_star_variant_parses_back_to_itself() {
+        let outline = Stroke::parse_outline("KAT/TKOG").unwrap();
+        for variant in Stroke::star_variants(&outline) {
+            let rendered = Stroke::render_outline(&variant);
+            assert_eq!(Stroke::parse_outline(&rendered).unwrap(), variant);
+        }
+    }
 
     fn roundtrip(s: &str) -> String {
         Stroke::parse(s).unwrap().to_string()

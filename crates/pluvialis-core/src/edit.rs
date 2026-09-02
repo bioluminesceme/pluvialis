@@ -91,6 +91,17 @@ pub struct SwapReport {
     pub backup: Option<PathBuf>,
 }
 
+/// What a bulk removal did.
+#[derive(Debug)]
+pub struct BulkRemoveReport {
+    pub path: PathBuf,
+    /// Each entry removed, as the file spelled its key, with the translation it
+    /// held. Deduplicated: two spellings of one outline are one entry.
+    pub removed: Vec<(String, String)>,
+    /// `None` when nothing was written, which is the case for an empty batch.
+    pub backup: Option<PathBuf>,
+}
+
 /// Add a new entry, or change an existing one's translation.
 pub fn set_entry(
     path: impl AsRef<Path>,
@@ -155,35 +166,78 @@ pub fn set_entry(
 
 /// Remove an entry. Errors if the outline is not present.
 pub fn remove_entry(path: impl AsRef<Path>, outline: &str) -> Result<EditReport, EditError> {
+    let report = remove_entries(path, &[outline])?;
+    Ok(EditReport {
+        path: report.path,
+        previous: report.removed.into_iter().next().map(|(_, value)| value),
+        backup: report.backup,
+    })
+}
+
+/// Remove several entries from one file in a single write.
+///
+/// All or nothing: if any outline is missing, nothing is written and
+/// [`EditError::NotFound`] names the one that was missing. A half-applied
+/// delete is not something the user can inspect or undo sensibly.
+///
+/// This exists because the obvious loop is expensive and noisy. Removing
+/// fourteen entries one at a time is fourteen reads, fourteen full reparses of
+/// a 93,000 line file, fourteen rewrites, and fourteen backup files to wade
+/// through when undoing. `strip_keys` already takes a map of any size, so one
+/// pass costs what one removal costs.
+pub fn remove_entries(
+    path: impl AsRef<Path>,
+    outlines: &[&str],
+) -> Result<BulkRemoveReport, EditError> {
     let path = path.as_ref().to_path_buf();
 
     let text = read(&path)?;
     let entries = parse(&path, &text)?;
-    let Some(key) = stored_key(&entries, outline) else {
-        return Err(EditError::NotFound {
-            outline: outline.to_owned(),
-            path,
-        });
-    };
-    let previous = entries[&key].clone();
 
+    // Keyed by the stored spelling, so two spellings of one outline (`TKLS`
+    // and `TK-LS`) collapse to the single line they both mean.
     let mut remove = BTreeMap::new();
-    remove.insert(key.clone(), previous.clone());
-    let updated = strip_keys(&text, &remove);
+    for outline in outlines {
+        let Some(key) = stored_key(&entries, outline) else {
+            return Err(EditError::NotFound {
+                outline: (*outline).to_owned(),
+                path,
+            });
+        };
+        let value = entries[&key].clone();
+        remove.insert(key, value);
+    }
 
+    if remove.is_empty() {
+        return Ok(BulkRemoveReport {
+            path,
+            removed: Vec::new(),
+            backup: None,
+        });
+    }
+
+    let updated = strip_keys(&text, &remove);
     let reparsed = parse_verify(&path, &updated)?;
-    verify_untouched(&path, &entries, &reparsed, &[&key], entries.len() - 1)?;
-    if reparsed.contains_key(&key) {
+
+    let edited: Vec<&str> = remove.keys().map(String::as_str).collect();
+    verify_untouched(
+        &path,
+        &entries,
+        &reparsed,
+        &edited,
+        entries.len() - remove.len(),
+    )?;
+    if let Some(key) = edited.iter().find(|key| reparsed.contains_key(**key)) {
         return Err(verification_failed(
             &path,
-            &format!("{outline:?} is still present after removal"),
+            &format!("{key:?} is still present after removal"),
         ));
     }
 
     let backup = write_with_backup(&path, &text, &updated)?;
-    Ok(EditReport {
+    Ok(BulkRemoveReport {
         path,
-        previous: Some(previous),
+        removed: remove.into_iter().collect(),
         backup: Some(backup),
     })
 }
@@ -766,6 +820,72 @@ mod tests {
         let map = read_map(&path);
         assert_eq!(map.len(), 1);
         assert_eq!(map["KAERT"], "cat");
+    }
+
+    /// One entry per line, which is the shape both real dictionaries use.
+    fn three_entries() -> &'static str {
+        r#"{
+"KAT": "cat",
+"TKOG": "dog",
+"PWEUS": "business"
+}
+"#
+    }
+
+    #[test]
+    fn removing_several_entries_takes_one_write_and_one_backup() {
+        let path = temp("bulk", three_entries());
+        let report = remove_entries(&path, &["KAT", "PWEUS"]).unwrap();
+
+        assert_eq!(report.removed.len(), 2);
+        assert!(report.backup.is_some());
+        let map = read_map(&path);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["TKOG"], "dog", "the untouched entry is byte identical");
+
+        // One backup, not one per entry.
+        let backup = std::fs::read_to_string(report.backup.unwrap()).unwrap();
+        assert_eq!(backup, three_entries());
+    }
+
+    #[test]
+    fn a_batch_with_a_missing_outline_writes_nothing() {
+        let path = temp("bulkmissing", three_entries());
+        assert!(matches!(
+            remove_entries(&path, &["KAT", "TPHOT"]),
+            Err(EditError::NotFound { .. })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            three_entries(),
+            "KAT is still there: all or nothing"
+        );
+    }
+
+    #[test]
+    fn an_empty_batch_writes_nothing_and_makes_no_backup() {
+        let path = temp("bulkempty", three_entries());
+        let report = remove_entries(&path, &[]).unwrap();
+
+        assert!(report.removed.is_empty());
+        assert!(report.backup.is_none());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), three_entries());
+    }
+
+    #[test]
+    fn two_spellings_of_one_outline_remove_one_entry() {
+        let path = temp(
+            "bulkdupe",
+            r#"{
+"TK-LS": "tools",
+"KAT": "cat"
+}
+"#,
+        );
+        let report = remove_entries(&path, &["TKLS", "TK-LS"]).unwrap();
+
+        assert_eq!(report.removed.len(), 1, "deduplicated to the one line");
+        assert_eq!(read_map(&path).len(), 1);
     }
 
     #[test]

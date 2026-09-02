@@ -99,6 +99,19 @@ impl Dictionary {
         &self.bad_keys
     }
 
+    /// Every entry, in unspecified order.
+    ///
+    /// For callers that browse rather than look up, such as a table of the
+    /// whole dictionary. The order is the hash map's and is not stable across
+    /// loads, so a caller that displays these has to impose its own order.
+    ///
+    /// Only entries whose keys parsed as steno are yielded. The rest are in
+    /// [`Self::bad_keys`], which is deliberate: showing a key the translator
+    /// cannot match would be showing an entry that does not work.
+    pub fn entries(&self) -> impl Iterator<Item = (&[Stroke], &str)> {
+        self.entries.iter().map(|(k, v)| (&**k, v.as_str()))
+    }
+
     /// Every entry that produces the given text, with its translation.
     ///
     /// Matched without regard to case, because the person asking "how do I
@@ -385,6 +398,44 @@ mod tests {
 
         stack.dictionaries_mut()[0].enabled = false;
         assert_eq!(stack.lookup(&outline("KAT")), Some("cat"));
+    }
+
+    #[test]
+    fn entries_yields_every_parsed_entry_and_no_bad_key() {
+        let path = write_dict(
+            "pluvialis_test_entries.json",
+            r#"{"KAT": "cat", "WEL/KO*PL": "welcome", "QQQ": "nonsense"}"#,
+        );
+        let dict = Dictionary::load(&path).unwrap();
+
+        let mut listed: Vec<(String, String)> = dict
+            .entries()
+            .map(|(strokes, value)| (Stroke::render_outline(strokes), value.to_owned()))
+            .collect();
+        listed.sort();
+
+        assert_eq!(listed.len(), dict.len());
+        assert_eq!(
+            listed,
+            [
+                ("KAT".to_owned(), "cat".to_owned()),
+                ("WEL/KO*PL".to_owned(), "welcome".to_owned()),
+            ]
+        );
+        assert_eq!(dict.bad_keys().len(), 1, "QQQ is reported, not listed");
+    }
+
+    #[test]
+    fn every_listed_entry_can_be_looked_up() {
+        let path = write_dict(
+            "pluvialis_test_entries_roundtrip.json",
+            r#"{"TK-LS": "tools", "KAT": "cat"}"#,
+        );
+        let dict = Dictionary::load(&path).unwrap();
+
+        for (strokes, value) in dict.entries() {
+            assert_eq!(dict.lookup(strokes), Some(value));
+        }
     }
 
     #[test]
