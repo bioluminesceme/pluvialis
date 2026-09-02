@@ -52,6 +52,12 @@ pub struct DictionaryPane {
     /// focus. Kept so clearing cannot silently throw the outline away.
     cleared_outline: String,
     edit_translation: String,
+    /// The same, for the word field. Both fields empty themselves when they
+    /// take focus so a value can be replaced without deleting it first, and
+    /// both keep what they held for the same reason: without it, clicking in
+    /// and out leaves a save with nothing to save and no sign of why.
+    cleared_translation: String,
+    translation_focused: bool,
     outline_focused: bool,
     /// The outcome of the last edit: `Ok` for a success line, `Err` for a
     /// refusal to show in red.
@@ -102,6 +108,8 @@ impl DictionaryPane {
         });
         self.edit_outline = outline.to_owned();
         self.edit_translation = word.to_owned();
+        self.cleared_outline.clear();
+        self.cleared_translation.clear();
         self.edit_message = None;
     }
 
@@ -112,6 +120,8 @@ impl DictionaryPane {
         self.loaded = None;
         self.edit_outline = outline.to_owned();
         self.edit_translation.clear();
+        self.cleared_outline.clear();
+        self.cleared_translation.clear();
         self.edit_message = None;
     }
 
@@ -289,18 +299,26 @@ It runs as                      written and is not sandboxed, the same trust mod
             self.outline_focused = response.has_focus();
 
             ui.label("Word");
-            ui.add(
+            let word_hint = match self.cleared_translation.is_empty() {
+                true => "move".to_owned(),
+                false => self.cleared_translation.clone(),
+            };
+            let response = ui.add(
                 egui::TextEdit::singleline(&mut self.edit_translation)
-                    .hint_text("move")
+                    .hint_text(word_hint)
                     .desired_width(ui.available_width().max(120.0)),
             );
+            if response.gained_focus() {
+                self.translation_regained_focus();
+            }
+            self.translation_focused = response.has_focus();
         });
 
         // An empty field with an entry loaded means "keep this outline",
         // which is what makes changing only the word possible after the
         // field has cleared itself.
         let has_outline = !self.effective_outline().is_empty();
-        let can_save = has_outline && !self.edit_translation.is_empty();
+        let can_save = has_outline && !self.effective_translation().is_empty();
 
         // The buttons get their own row rather than trailing the fields. On the
         // row they used to share, the bottom panel is already narrowed by the
@@ -450,6 +468,16 @@ It runs as                      written and is not sandboxed, the same trust mod
     /// all, which greyed out the save button with nothing on screen to say why:
     /// the entry looked entered and was never written. That is exactly how
     /// TKEPT was lost on 2026-09-02.
+    /// The word field empties on taking focus, like the outline field, so the
+    /// word can be replaced without selecting and deleting it first.
+    fn translation_regained_focus(&mut self) {
+        if !self.edit_translation.trim().is_empty() {
+            self.cleared_translation = self.edit_translation.trim().to_owned();
+        }
+        self.edit_translation.clear();
+        self.edit_message = None;
+    }
+
     fn outline_regained_focus(&mut self) {
         if !self.edit_outline.trim().is_empty() {
             self.cleared_outline = self.edit_outline.trim().to_owned();
@@ -462,6 +490,7 @@ It runs as                      written and is not sandboxed, the same trust mod
     fn clear_editor(&mut self) {
         self.loaded = None;
         self.cleared_outline.clear();
+        self.cleared_translation.clear();
         self.edit_outline.clear();
         self.edit_translation.clear();
         self.edit_message = None;
@@ -483,8 +512,19 @@ It runs as                      written and is not sandboxed, the same trust mod
         }
     }
 
+    /// The word the buttons act on: the field, or what it held before it
+    /// cleared itself.
+    fn effective_translation(&self) -> String {
+        let typed = self.edit_translation.trim();
+        match typed.is_empty() {
+            true => self.cleared_translation.clone(),
+            false => typed.to_owned(),
+        }
+    }
+
     fn apply_edit(&mut self, dictionaries: &mut DictionaryStack, kind: EditKind) -> bool {
         let outline = self.effective_outline();
+        let translation = self.effective_translation();
         let loaded = self.loaded.clone();
 
         // An entry loaded from the table is edited in its own file. Anything
@@ -519,10 +559,10 @@ It runs as                      written and is not sandboxed, the same trust mod
                 // write. Adding the new one and deleting the old separately
                 // would leave the entry duplicated if the second write failed.
                 Some(loaded) if loaded.outline != outline => {
-                    move_entry(&path, &loaded.outline, &outline, &self.edit_translation)
+                    move_entry(&path, &loaded.outline, &outline, &translation)
                         .map(|_| format!("Moved {} to {outline} in {name}", loaded.outline))
                 }
-                _ => set_entry(&path, &outline, &self.edit_translation)
+                _ => set_entry(&path, &outline, &translation)
                     .map(|_| format!("Saved {outline} to {name}")),
             },
             EditKind::Remove => {
@@ -547,6 +587,7 @@ It runs as                      written and is not sandboxed, the same trust mod
                         // The entry is loaded now, so the loaded outline is
                         // the fallback and the remembered one would shadow it.
                         self.cleared_outline.clear();
+                        self.cleared_translation.clear();
                     }
                     EditKind::Remove => self.clear_editor(),
                 }
@@ -628,6 +669,48 @@ mod focus_tests {
         pane.edit_outline = "TKPAERT".to_owned();
 
         assert_eq!(pane.effective_outline(), "TKPAERT");
+    }
+
+    /// The word field clears on focus like the outline field does, and must
+    /// keep what it held for the same reason: a save with an empty word is
+    /// refused, so losing it silently disables the button with nothing on
+    /// screen to explain it.
+    #[test]
+    fn clicking_back_into_the_word_field_does_not_lose_it() {
+        let mut pane = DictionaryPane::new();
+        pane.edit_outline = "TKEPT".to_owned();
+        pane.edit_translation = "department".to_owned();
+
+        pane.translation_regained_focus();
+
+        assert!(
+            pane.edit_translation.is_empty(),
+            "the field clears, as asked"
+        );
+        assert_eq!(pane.effective_translation(), "department");
+    }
+
+    #[test]
+    fn a_freshly_typed_word_wins_over_the_remembered_one() {
+        let mut pane = DictionaryPane::new();
+        pane.edit_translation = "department".to_owned();
+        pane.translation_regained_focus();
+        pane.edit_translation = "depart".to_owned();
+
+        assert_eq!(pane.effective_translation(), "depart");
+    }
+
+    /// Both fields cleared and neither retyped still saves what was entered.
+    #[test]
+    fn clearing_both_fields_still_saves_the_entry() {
+        let mut pane = DictionaryPane::new();
+        pane.edit_outline = "TKEPT".to_owned();
+        pane.edit_translation = "department".to_owned();
+        pane.outline_regained_focus();
+        pane.translation_regained_focus();
+
+        assert_eq!(pane.effective_outline(), "TKEPT");
+        assert_eq!(pane.effective_translation(), "department");
     }
 
     /// Starting a new entry forgets the previous one entirely.
