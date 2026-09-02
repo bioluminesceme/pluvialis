@@ -2711,7 +2711,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "pluvialis-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossbeam-channel",
  "eframe",
@@ -2731,7 +2731,7 @@ dependencies = [
 
 [[package]]
 name = "pluvialis-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fancy-regex",
  "serde_json",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "pluvialis-machine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "pluvialis-output"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "thiserror 2.0.19",
@@ -2761,7 +2761,7 @@ dependencies = [
 
 [[package]]
 name = "pluvialis-python"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "pluvialis-core",
