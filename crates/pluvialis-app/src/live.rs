@@ -670,28 +670,15 @@ impl LiveView {
                     ui.label(egui::RichText::new(name).strong().monospace());
                 }
                 ui.add_space(8.0);
-                ui.label(
-                    "This is not a list of words. It is a small program that \
-                     works out what to write as you type.",
-                );
+                ui.label("Only add Python dictionaries from a source you trust.");
                 ui.add_space(6.0);
                 ui.label(
-                    "Pluvialis will run it on your computer as you, so it can do \
-                     anything you can do: open, change or delete your files, and \
-                     use your internet connection. Nothing checks it first.",
-                );
-                ui.add_space(6.0);
-                ui.label(
-                    "Only add one if you trust whoever made it, the same way you \
-                     would only install a program from someone you trust. If you \
-                     are not sure where this file came from, choose Cancel. \
-                     Nothing is lost by saying no.",
+                    "A Python dictionary is a program. It can run any code it                      contains: steno translation, but equally anything else,                      including malware. Pluvialis runs it as you, and nothing                      checks it first.",
                 );
                 ui.add_space(6.0);
                 ui.label(
                     egui::RichText::new(
-                        "It will be added switched off. You decide when to turn \
-                         it on.",
+                        "It is added switched off, so nothing runs until you                          turn it on.",
                     )
                     .small()
                     .weak(),
